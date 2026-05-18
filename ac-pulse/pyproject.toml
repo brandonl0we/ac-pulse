@@ -1,0 +1,48 @@
+[project]
+name = "ac-pulse"
+version = "0.1.0"
+description = "Customer success signal sync service for ActiveCampaign"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "arq>=0.26.3",
+  "fastapi>=0.115.0",
+  "httpx>=0.27.0",
+  "pydantic-settings>=2.7.0",
+  "redis>=5.2.0",
+  "snowflake-connector-python>=3.14.0",
+  "structlog>=25.0.0",
+  "uvicorn>=0.34.0",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.14.0",
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.24.0",
+  "respx>=0.21.1",
+  "ruff>=0.9.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+pretty = true
+show_error_codes = true
+plugins = ["pydantic.mypy"]
+exclude = ["tests/fixtures/"]
+
+[[tool.mypy.overrides]]
+module = ["snowflake.connector.*", "arq.*"]
+ignore_missing_imports = true
