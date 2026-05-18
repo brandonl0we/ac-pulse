@@ -1,0 +1,16 @@
+{
+  "healthCheck": "/healthz",
+  "resources": {
+    "size": "medium"
+  },
+  "workers": [
+    {
+      "name": "arq-worker",
+      "command": "sh -c \"PYTHONPATH=/app/ac-pulse arq app.workers.settings.WorkerSettings\"",
+      "replicas": 1,
+      "resources": {
+        "size": "small"
+      }
+    }
+  ]
+}
