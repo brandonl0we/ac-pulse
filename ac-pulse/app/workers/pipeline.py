@@ -35,7 +35,7 @@ async def run_signal_sync(
     settings = get_settings()
     snowflake_client = SnowflakeClient(settings)
     configure_audit(snowflake_client)
-    resolver = AccountResolver(settings.account_id_map_path)
+    resolver = AccountResolver.from_settings(settings)
     run_id = f"{worker_name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
 
     extractor_results = await asyncio.gather(

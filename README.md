@@ -29,8 +29,24 @@ Set these in Spark app settings/secrets:
 - `SNOWFLAKE_DATABASE`
 - `SNOWFLAKE_ROLE`
 - `ACCOUNT_ID_MAP_PATH` (example: `./data/account_id_map.csv`)
+- `ACCOUNT_ID_MAP_JSON` (optional Spark-friendly override, example: `{"101":9001}`)
 - `REDIS_URL`
 - `CRON_SECRET`
+
+## First live Spark test
+
+Use a single sandbox account until the Snowflake-to-ActiveCampaign mapping source
+is confirmed.
+
+1. Set `LIMIT_ACCOUNTS=1`.
+2. Set either `ACCOUNT_ID_MAP_JSON='{"<snowflake_account_id>":<ac_account_id>}'`
+   or provide a CSV at `ACCOUNT_ID_MAP_PATH` with `snowflake_account_id` and
+   `ac_account_id` columns.
+3. Trigger `POST /resync/{snowflake_account_id}`.
+4. Check `/audit/recent` and the target AC account fields before widening scope.
+
+`ACCOUNT_ID_MAP_JSON` takes precedence over the CSV path. If a resync has no
+matching mapping, the endpoint returns a failure instead of silently succeeding.
 
 ## API endpoints
 

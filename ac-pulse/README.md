@@ -24,8 +24,12 @@ uv run uvicorn app.main:app --reload
 ## API key and environment setup
 
 - Local development: put your key in `.env` as `AC_API_KEY=<your_key>`
-- Fly.io: set secrets with `fly secrets set AC_API_KEY=... AC_API_URL=...`
+- Spark: set secrets in app settings. Use `ACCOUNT_ID_MAP_JSON` for the first
+  sandbox mapping, for example `{"101":9001}`.
 - Never commit API keys to git. `.env` is ignored by `.gitignore`.
+
+For the first live resync, set `LIMIT_ACCOUNTS=1`, then call
+`POST /resync/{snowflake_account_id}` and inspect `/audit/recent`.
 
 ## Required ActiveCampaign custom fields
 

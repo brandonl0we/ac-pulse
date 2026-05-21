@@ -35,4 +35,6 @@ httpx, pydantic v2, structlog, pytest, ruff, and strict mypy.
 - Keep SQL in `sql/extractors/` or `sql/migrations/`, not embedded in Python.
 - Confirm the Snowflake-to-ActiveCampaign account mapping source before building
   any production write path that depends on account IDs.
+- For first Spark tests, prefer `ACCOUNT_ID_MAP_JSON` with one account and
+  `LIMIT_ACCOUNTS=1`; it takes precedence over the CSV mapping path.
 - Treat the audit log as the operational source of truth for field-write attempts.

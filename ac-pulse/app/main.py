@@ -49,9 +49,26 @@ async def healthz() -> dict[str, object]:
 @app.post("/resync/{account_id}")
 async def resync(account_id: int) -> dict[str, Any]:
     try:
-        return await run_on_demand({}, account_id)
+        result = await run_on_demand({}, account_id)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Unable to resync account: {exc}") from exc
+    summary = result.get("summary", {})
+    processed = int(summary.get("processed", 0))
+    failed = int(summary.get("failed", 0))
+    if processed == 0 and failed > 0:
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Resync did not write the account. Check ACCOUNT_ID_MAP_JSON or "
+                "ACCOUNT_ID_MAP_PATH and the audit logs."
+            ),
+        )
+    if processed == 0:
+        raise HTTPException(
+            status_code=404,
+            detail="No extracted signals matched the requested Snowflake account ID.",
+        )
+    return result
 
 
 @app.get("/audit/recent")

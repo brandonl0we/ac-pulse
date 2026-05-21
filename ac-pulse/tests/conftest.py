@@ -27,6 +27,7 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
         "ENV": "test",
         "LOG_LEVEL": "INFO",
         "ACCOUNT_ID_MAP_PATH": "./data/account_id_map.csv",
+        "ACCOUNT_ID_MAP_JSON": "",
         "GIT_SHA": "deadbee",
     }
     for key, value in env.items():

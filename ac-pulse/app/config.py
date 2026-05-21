@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     account_id_map_path: Path = Field(alias="ACCOUNT_ID_MAP_PATH")
+    account_id_map_json: str | None = Field(default=None, alias="ACCOUNT_ID_MAP_JSON")
     git_sha: str | None = Field(default=None, alias="GIT_SHA")
 
 
