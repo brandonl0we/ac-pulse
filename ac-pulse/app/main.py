@@ -32,35 +32,50 @@ def _git_sha_from_repo() -> str:
 
 @app.get("/healthz")
 async def healthz() -> dict[str, object]:
-    """Liveness + dependency health.
+    """Liveness probe — does NOT call any external service.
 
-    Probes Snowflake explicitly with a `SELECT 1` so a bad JWT key surfaces
-    immediately on deploy (rather than silently returning OK and only
-    failing on the next worker run). The audit-log lookup is kept as a
-    secondary check — it exercises the same connection but against the
-    audit schema, which lets us catch broken role/grant issues separately
-    from "can we connect at all".
+    Kubernetes uses this to decide if the process should be restarted.
+    A previous version of this handler called Snowflake on every request,
+    which crashed deploys when Snowflake's network policy didn't include
+    the Spark egress IP — the TCP connect timed out, the probe failed,
+    Kubernetes restarted the container, and the loop repeated forever.
 
-    Always returns 200 so external uptime monitors stay green during
-    partial outages; the body's `status` field reflects truth ("ok" vs
-    "degraded"). If you need 5xx on degradation, wire that on the
-    monitoring side.
+    Liveness must depend ONLY on process state. Dependency health belongs
+    on /readyz.
     """
     version = settings.git_sha or _git_sha_from_repo()
-    snowflake = SnowflakeClient(settings)
+    return {"status": "ok", "version": version}
+
+
+@app.get("/readyz")
+async def readyz() -> dict[str, object]:
+    """Readiness probe — checks dependency health.
+
+    Calls Snowflake to verify auth + network reachability + grants.
+    Always returns HTTP 200; the body's `status` field reflects truth
+    ("ok" / "degraded"). This separates the question "should the process
+    run" (liveness) from "can it actually serve" (readiness).
+
+    Hit this after a deploy to validate the Snowflake JWT chain. If
+    snowflake.status === "down" with a TCP error, the Spark egress IP
+    (see runtime logs) needs to be whitelisted in Snowflake's network
+    policy.
+    """
+    version = settings.git_sha or _git_sha_from_repo()
+    client = SnowflakeClient(settings)
 
     snowflake_status: dict[str, object] = {"status": "ok"}
     try:
-        await snowflake.execute("SELECT 1 AS ping", None)
+        await client.execute("SELECT 1 AS ping", None)
     except Exception as exc:
-        logger.exception("healthz_snowflake_ping_failed")
+        logger.exception("readyz_snowflake_ping_failed")
         snowflake_status = {"status": "down", "error": str(exc)[:1000]}
 
     worker_last_success: dict[str, str | None]
     try:
         worker_last_success = await get_last_success_by_worker()
     except Exception as exc:
-        logger.exception("healthz_worker_lookup_failed")
+        logger.exception("readyz_worker_lookup_failed")
         worker_last_success = {
             "error": str(exc)[:1000],
             "nightly": None,
@@ -70,7 +85,7 @@ async def healthz() -> dict[str, object]:
         }
 
     overall = "ok" if snowflake_status["status"] == "ok" else "degraded"
-    logger.debug("health_check", version=version, status=overall)
+    logger.debug("readyz_check", version=version, status=overall)
     return {
         "status": overall,
         "version": version,
