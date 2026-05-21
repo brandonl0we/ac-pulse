@@ -1,8 +1,8 @@
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import structlog
-from arq.connections import RedisSettings, create_pool
 from fastapi import FastAPI, HTTPException
 
 from app.ac_client.api import ActiveCampaignAPI
@@ -11,6 +11,7 @@ from app.audit import configure_audit, get_last_success_by_worker, get_recent_au
 from app.config import get_settings
 from app.logging_setup import configure_logging
 from app.snowflake_client import SnowflakeClient
+from app.workers.on_demand import run_on_demand
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -46,16 +47,11 @@ async def healthz() -> dict[str, object]:
 
 
 @app.post("/resync/{account_id}")
-async def resync(account_id: int) -> dict[str, str]:
+async def resync(account_id: int) -> dict[str, Any]:
     try:
-        redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
-        job = await redis.enqueue_job("run_on_demand", account_id)
-        await redis.aclose()
+        return await run_on_demand({}, account_id)
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Unable to enqueue resync job: {exc}") from exc
-    if job is None:
-        raise HTTPException(status_code=500, detail="Failed to create resync job")
-    return {"job_id": job.job_id}
+        raise HTTPException(status_code=500, detail=f"Unable to resync account: {exc}") from exc
 
 
 @app.get("/audit/recent")
