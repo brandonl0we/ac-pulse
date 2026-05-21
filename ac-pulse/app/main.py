@@ -1,9 +1,10 @@
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 
 from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
@@ -90,6 +91,95 @@ async def resync(account_id: int) -> dict[str, Any]:
 async def audit_recent() -> dict[str, object]:
     rows = await get_recent_audit_rows(limit=100)
     return {"rows": rows}
+
+
+def _require_service_key(provided: str | None) -> None:
+    """Shared-secret gate for cross-service endpoints.
+
+    Other Spark agents that call ac-pulse pass their secret via the
+    X-Service-Key header. If SERVICE_API_KEY isn't configured, the
+    endpoint 503s rather than running unauthed.
+    """
+    if not settings.service_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="SERVICE_API_KEY not configured on this deployment",
+        )
+    if provided != settings.service_api_key:
+        raise HTTPException(status_code=401, detail="invalid service key")
+
+
+@app.get("/admin/smoke-snowflake")
+async def smoke_snowflake(
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+    activehosted_id: str | None = Query(
+        default=None,
+        description="If provided, look up this specific account's projected ARR. "
+        "Otherwise the smoke test returns one sample row.",
+    ),
+) -> dict[str, object]:
+    """End-to-end smoke test of the Snowflake JWT connection.
+
+    Queries AC.CONFORMED_DIMENSIONS.EXPECTED_ARR_MODEL_PREDICTIONS — the
+    same canonical table from the example connection — to prove:
+      1. PEM private key parsed correctly
+      2. JWT auth handshake succeeded
+      3. The role has SELECT grants on the conformed dimensions schema
+      4. Results return as expected dicts
+
+    Useful as a deploy-time validation and as a real lookup demo of the
+    shape future service endpoints will use.
+    """
+    _require_service_key(x_service_key)
+
+    if activehosted_id:
+        sql = (
+            "SELECT ACCOUNT_ID, ACTIVEHOSTED_ID, PROJECTED_ARR, "
+            "PROJECTED_ARR_PREDICTION_TIMESTAMP "
+            "FROM AC.CONFORMED_DIMENSIONS.EXPECTED_ARR_MODEL_PREDICTIONS "
+            "WHERE ACTIVEHOSTED_ID = %(activehosted_id)s "
+            "LIMIT 5"
+        )
+        params: dict[str, Any] = {"activehosted_id": activehosted_id}
+    else:
+        sql = (
+            "SELECT ACCOUNT_ID, ACTIVEHOSTED_ID, PROJECTED_ARR, "
+            "PROJECTED_ARR_PREDICTION_TIMESTAMP "
+            "FROM AC.CONFORMED_DIMENSIONS.EXPECTED_ARR_MODEL_PREDICTIONS "
+            "LIMIT 1"
+        )
+        params = {}
+
+    client = SnowflakeClient(settings)
+    started = time.monotonic()
+    try:
+        rows = await client.execute(sql, params)
+    except Exception as exc:
+        logger.exception("smoke_snowflake_failed", activehosted_id=activehosted_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Snowflake query failed: {str(exc)[:300]}",
+        ) from exc
+    elapsed_ms = int((time.monotonic() - started) * 1000)
+
+    logger.info(
+        "smoke_snowflake_ok",
+        rows=len(rows),
+        elapsed_ms=elapsed_ms,
+        activehosted_id=activehosted_id,
+    )
+    return {
+        "status": "ok",
+        "account": settings.snowflake_account,
+        "user": settings.snowflake_user,
+        "warehouse": settings.snowflake_warehouse,
+        "database": settings.snowflake_database,
+        "schema": settings.snowflake_schema,
+        "query": sql,
+        "row_count": len(rows),
+        "elapsed_ms": elapsed_ms,
+        "rows": rows,
+    }
 
 
 @app.post("/admin/bootstrap-account-fields")

@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     env: str = Field(default="development", alias="ENV")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Shared secret for inter-service calls. Set in Spark; other agents
+    # pass it via X-Service-Key header to call /admin/smoke-snowflake
+    # (and future lookup endpoints). When unset, those endpoints 503.
+    service_api_key: str | None = Field(default=None, alias="SERVICE_API_KEY")
+
     account_id_map_path: Path = Field(alias="ACCOUNT_ID_MAP_PATH")
     git_sha: str | None = Field(default=None, alias="GIT_SHA")
 
