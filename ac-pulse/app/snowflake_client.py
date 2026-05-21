@@ -1,4 +1,5 @@
 import asyncio
+import re
 from collections.abc import Mapping
 from threading import Lock
 from typing import Any, cast
@@ -18,25 +19,75 @@ _PRIVATE_KEY_DER: bytes | None = None
 _PRIVATE_KEY_LOCK = Lock()
 
 
+def _reconstruct_pem_framing(pem: str) -> str | None:
+    """Rebuild a valid PEM string from one whose newlines were stripped
+    or replaced with spaces.
+
+    Spark/Fly/Heroku-style secret stores frequently mangle multi-line
+    secrets:
+      - newlines → single spaces
+      - newlines → ``\\n`` literal tokens
+      - newlines stripped entirely
+    Any of these breaks PEM framing and yields MalformedFraming from
+    cryptography. We extract the BEGIN/END markers, strip all whitespace
+    from the base64 body, and re-emit a canonically-framed PEM (header
+    line, 64-char body lines, footer line).
+
+    Returns None when no BEGIN/END markers can be found — caller should
+    treat that as "unrecoverable" and surface the original error.
+    """
+    match = re.search(
+        r"-----BEGIN ([A-Z ]+?)-----(.+?)-----END \1-----",
+        pem,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+    header_type = match.group(1).strip()
+    body = re.sub(r"\s+", "", match.group(2))
+    if not body:
+        return None
+    wrapped = "\n".join(body[i : i + 64] for i in range(0, len(body), 64))
+    return f"-----BEGIN {header_type}-----\n{wrapped}\n-----END {header_type}-----\n"
+
+
 def _load_private_key_der(pem: str) -> bytes:
     """Convert a PEM-encoded RSA private key to PKCS8 DER bytes.
 
-    snowflake-connector-python's `private_key` parameter expects DER. The
-    PEM string we get from SNOWFLAKE_API_KEY may include actual newlines
-    or the literal ``\\n`` token depending on how Fly.io / the local
-    .env stores it — both are handled.
+    snowflake-connector-python expects DER. The PEM string from
+    SNOWFLAKE_API_KEY may arrive in any of several mangled forms
+    depending on how Spark stored it, so we try multiple normalizations
+    in order before giving up.
     """
-    pem_text = pem.replace("\\n", "\n") if "\\n" in pem and "\n" not in pem else pem
-    private_key = serialization.load_pem_private_key(
-        pem_text.encode("utf-8"),
-        password=None,
-        backend=default_backend(),
-    )
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    )
+    attempts: list[tuple[str, str]] = [("as-is", pem)]
+    if "\\n" in pem:
+        attempts.append(("escaped-newlines", pem.replace("\\n", "\n")))
+    reconstructed = _reconstruct_pem_framing(pem)
+    if reconstructed is not None:
+        attempts.append(("reconstructed-framing", reconstructed))
+
+    last_error: Exception | None = None
+    for _label, candidate in attempts:
+        try:
+            private_key = serialization.load_pem_private_key(
+                candidate.encode("utf-8"),
+                password=None,
+                backend=default_backend(),
+            )
+            return private_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+        except Exception as exc:
+            last_error = exc
+            continue
+
+    tried = ", ".join(label for label, _ in attempts)
+    raise ValueError(
+        f"Could not parse SNOWFLAKE_API_KEY as PEM after {len(attempts)} "
+        f"attempts ({tried}). Last error: {last_error}"
+    ) from last_error
 
 
 def _get_private_key_der(settings: Settings) -> bytes:
