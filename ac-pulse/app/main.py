@@ -31,19 +31,51 @@ def _git_sha_from_repo() -> str:
 
 @app.get("/healthz")
 async def healthz() -> dict[str, object]:
+    """Liveness + dependency health.
+
+    Probes Snowflake explicitly with a `SELECT 1` so a bad JWT key surfaces
+    immediately on deploy (rather than silently returning OK and only
+    failing on the next worker run). The audit-log lookup is kept as a
+    secondary check — it exercises the same connection but against the
+    audit schema, which lets us catch broken role/grant issues separately
+    from "can we connect at all".
+
+    Always returns 200 so external uptime monitors stay green during
+    partial outages; the body's `status` field reflects truth ("ok" vs
+    "degraded"). If you need 5xx on degradation, wire that on the
+    monitoring side.
+    """
     version = settings.git_sha or _git_sha_from_repo()
+    snowflake = SnowflakeClient(settings)
+
+    snowflake_status: dict[str, object] = {"status": "ok"}
+    try:
+        await snowflake.execute("SELECT 1 AS ping", None)
+    except Exception as exc:
+        logger.exception("healthz_snowflake_ping_failed")
+        snowflake_status = {"status": "down", "error": str(exc)[:200]}
+
+    worker_last_success: dict[str, str | None]
     try:
         worker_last_success = await get_last_success_by_worker()
-    except Exception:
+    except Exception as exc:
         logger.exception("healthz_worker_lookup_failed")
         worker_last_success = {
+            "error": str(exc)[:200],
             "nightly": None,
             "monthly": None,
             "weekly_snapshot": None,
             "on_demand": None,
         }
-    logger.debug("health_check", version=version)
-    return {"status": "ok", "version": version, "workers": worker_last_success}
+
+    overall = "ok" if snowflake_status["status"] == "ok" else "degraded"
+    logger.debug("health_check", version=version, status=overall)
+    return {
+        "status": overall,
+        "version": version,
+        "snowflake": snowflake_status,
+        "workers": worker_last_success,
+    }
 
 
 @app.post("/resync/{account_id}")
