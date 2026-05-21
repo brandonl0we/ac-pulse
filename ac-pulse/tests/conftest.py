@@ -15,9 +15,12 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     env = {
         "SNOWFLAKE_ACCOUNT": "acct",
         "SNOWFLAKE_USER": "user",
-        "SNOWFLAKE_PASSWORD": "pass",
+        # Dummy PEM string — tests use mock_snowflake_client, so this
+        # value is never actually parsed against snowflake-connector.
+        "SNOWFLAKE_API_KEY": "test-private-key-pem",
         "SNOWFLAKE_WAREHOUSE": "wh",
         "SNOWFLAKE_DATABASE": "db",
+        "SNOWFLAKE_SCHEMA": "schema",
         "SNOWFLAKE_ROLE": "role",
         "AC_API_URL": "https://example.test/api/3",
         "AC_API_KEY": "key",

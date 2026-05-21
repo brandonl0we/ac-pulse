@@ -13,12 +13,19 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
     )
 
-    snowflake_account: str = Field(alias="SNOWFLAKE_ACCOUNT")
-    snowflake_user: str = Field(alias="SNOWFLAKE_USER")
-    snowflake_password: str = Field(alias="SNOWFLAKE_PASSWORD")
-    snowflake_warehouse: str = Field(alias="SNOWFLAKE_WAREHOUSE")
-    snowflake_database: str = Field(alias="SNOWFLAKE_DATABASE")
-    snowflake_role: str = Field(alias="SNOWFLAKE_ROLE")
+    # Snowflake JWT (key-pair) auth — the canonical AC path.
+    # Defaults match the official DEAL_CONDUCTOR_SVC user on FM00411.
+    # The private key (PEM-encoded) comes from SNOWFLAKE_API_KEY; it's
+    # the only secret that must be set. Everything else has a sane
+    # default but can be overridden via env.
+    snowflake_account: str = Field(default="FM00411", alias="SNOWFLAKE_ACCOUNT")
+    snowflake_user: str = Field(default="DEAL_CONDUCTOR_SVC", alias="SNOWFLAKE_USER")
+    snowflake_private_key: str = Field(alias="SNOWFLAKE_API_KEY")
+    snowflake_warehouse: str = Field(default="AC_CONSOLIDATED", alias="SNOWFLAKE_WAREHOUSE")
+    snowflake_database: str = Field(default="AC", alias="SNOWFLAKE_DATABASE")
+    snowflake_schema: str = Field(default="CONFORMED_DIMENSIONS", alias="SNOWFLAKE_SCHEMA")
+    # Role is optional — when unset, Snowflake uses the user's default role.
+    snowflake_role: str | None = Field(default=None, alias="SNOWFLAKE_ROLE")
 
     ac_api_url: str = Field(alias="AC_API_URL")
     ac_api_key: str = Field(alias="AC_API_KEY")
