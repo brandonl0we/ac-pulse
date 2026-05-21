@@ -1,0 +1,12 @@
+[
+  {
+    "ACCOUNT_ID": 101,
+    "CHURN_DECILE_BAND": "Very High",
+    "CHURN_SCORE": 0.97
+  },
+  {
+    "ACCOUNT_ID": 202,
+    "CHURN_DECILE_BAND": "High",
+    "CHURN_SCORE": 0.73
+  }
+]
