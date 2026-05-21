@@ -54,7 +54,7 @@ async def healthz() -> dict[str, object]:
         await snowflake.execute("SELECT 1 AS ping", None)
     except Exception as exc:
         logger.exception("healthz_snowflake_ping_failed")
-        snowflake_status = {"status": "down", "error": str(exc)[:200]}
+        snowflake_status = {"status": "down", "error": str(exc)[:1000]}
 
     worker_last_success: dict[str, str | None]
     try:
@@ -62,7 +62,7 @@ async def healthz() -> dict[str, object]:
     except Exception as exc:
         logger.exception("healthz_worker_lookup_failed")
         worker_last_success = {
-            "error": str(exc)[:200],
+            "error": str(exc)[:1000],
             "nightly": None,
             "monthly": None,
             "weekly_snapshot": None,

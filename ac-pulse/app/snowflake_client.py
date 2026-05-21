@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import re
 from collections.abc import Mapping
 from threading import Lock
@@ -51,6 +52,64 @@ def _reconstruct_pem_framing(pem: str) -> str | None:
     return f"-----BEGIN {header_type}-----\n{wrapped}\n-----END {header_type}-----\n"
 
 
+_BASE64_BODY_RE = re.compile(r"^[A-Za-z0-9+/=\s]+$")
+
+
+def _wrap_bare_base64_as_pem(value: str) -> str | None:
+    """If the input looks like pure base64 (no markers, no other content),
+    wrap it with standard PRIVATE KEY headers. This handles the case
+    where the secret store stripped the BEGIN/END framing entirely.
+    """
+    body = re.sub(r"\s+", "", value)
+    if not body or not _BASE64_BODY_RE.match(value):
+        return None
+    # Sanity check: must look like base64 of a reasonable key length.
+    if len(body) < 100:
+        return None
+    wrapped = "\n".join(body[i : i + 64] for i in range(0, len(body), 64))
+    return f"-----BEGIN PRIVATE KEY-----\n{wrapped}\n-----END PRIVATE KEY-----\n"
+
+
+def _try_base64_decode_to_pem(value: str) -> str | None:
+    """If the input is base64-encoded text whose decoded form is a PEM,
+    return the decoded string. Handles the case where Spark base64-
+    encoded the whole secret to preserve newlines.
+    """
+    stripped = re.sub(r"\s+", "", value)
+    if not stripped or not _BASE64_BODY_RE.match(value):
+        return None
+    try:
+        decoded = base64.b64decode(stripped, validate=True)
+    except Exception:
+        return None
+    try:
+        text = decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "BEGIN" in text and "PRIVATE KEY" in text:
+        return text
+    return None
+
+
+def diagnose_pem_value(pem: str) -> dict[str, Any]:
+    """Safe, no-secrets-leaked diagnostic for the SNOWFLAKE_API_KEY value.
+
+    Returns shape/structure info without exposing the actual bytes.
+    Used by /healthz when parsing fails so the operator can tell what
+    went wrong without scraping container logs.
+    """
+    return {
+        "length": len(pem),
+        "has_begin_marker": "BEGIN" in pem,
+        "has_end_marker": "END" in pem,
+        "has_real_newlines": "\n" in pem,
+        "has_literal_backslash_n": "\\n" in pem,
+        "starts_with": pem[:20] if pem else "",
+        "ends_with": pem[-20:] if len(pem) > 20 else "",
+        "looks_like_pure_base64": bool(pem and _BASE64_BODY_RE.match(pem)),
+    }
+
+
 def _load_private_key_der(pem: str) -> bytes:
     """Convert a PEM-encoded RSA private key to PKCS8 DER bytes.
 
@@ -65,6 +124,12 @@ def _load_private_key_der(pem: str) -> bytes:
     reconstructed = _reconstruct_pem_framing(pem)
     if reconstructed is not None:
         attempts.append(("reconstructed-framing", reconstructed))
+    bare_wrapped = _wrap_bare_base64_as_pem(pem)
+    if bare_wrapped is not None:
+        attempts.append(("wrapped-bare-base64", bare_wrapped))
+    b64_decoded = _try_base64_decode_to_pem(pem)
+    if b64_decoded is not None:
+        attempts.append(("base64-decoded", b64_decoded))
 
     last_error: Exception | None = None
     for _label, candidate in attempts:
@@ -84,9 +149,10 @@ def _load_private_key_der(pem: str) -> bytes:
             continue
 
     tried = ", ".join(label for label, _ in attempts)
+    diag = diagnose_pem_value(pem)
     raise ValueError(
         f"Could not parse SNOWFLAKE_API_KEY as PEM after {len(attempts)} "
-        f"attempts ({tried}). Last error: {last_error}"
+        f"attempts ({tried}). Diagnosis: {diag}. Last error: {last_error}"
     ) from last_error
 
 
