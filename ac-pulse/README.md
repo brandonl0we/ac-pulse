@@ -28,6 +28,14 @@ uv run uvicorn app.main:app --reload
 - Fly.io: set secrets with `fly secrets set AC_API_KEY=... AC_API_URL=...`
 - Never commit API keys to git. `.env` is ignored by `.gitignore`.
 
+## Snowflake backend
+
+- Production path: `SNOWFLAKE_BACKEND=direct` with `SNOWFLAKE_API_KEY`.
+- POC path: `SNOWFLAKE_BACKEND=zapier_mcp` with `ZAPIER_MCP_URL` and
+  `ZAPIER_MCP_TOKEN`.
+- Zapier MCP is intended for read-only pulse/lookup flows. Batch writes and
+  audit inserts still require the direct Snowflake backend.
+
 ## Required ActiveCampaign custom fields
 
 This service writes the following account custom fields (created automatically by
