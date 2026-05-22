@@ -20,6 +20,7 @@ from app.extractors.touchpoints import TouchpointsExtractor
 from app.extractors.utilization import UtilizationExtractor
 from app.logging_setup import configure_logging
 from app.lookup_service import lookup_customer_by_email
+from app.portfolio import build_success_rep_portfolio
 from app.pulse import build_account_pulse, build_account_resolver
 from app.snowflake_client import SnowflakeClient
 from app.workers.on_demand import run_on_demand
@@ -139,6 +140,14 @@ async def resync(account_id: int) -> dict[str, Any]:
 async def audit_recent() -> dict[str, object]:
     rows = await get_recent_audit_rows(limit=100)
     return {"rows": rows}
+
+
+@app.get("/portfolio/{rep_name}")
+async def success_rep_portfolio(rep_name: str) -> dict[str, Any]:
+    return await build_success_rep_portfolio(
+        snowflake_client=SnowflakeClient(settings),
+        rep_name=rep_name,
+    )
 
 
 @app.get("/pulse/{account_id}")
