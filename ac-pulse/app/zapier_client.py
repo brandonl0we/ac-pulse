@@ -63,9 +63,14 @@ async def execute_snowflake_sql(
                         "instructions": instructions,
                     },
                 )
-    except Exception as exc:
-        logger.exception("zapier_mcp_call_failed")
-        raise ZapierMCPError(f"MCP call failed: {exc}") from exc
+    except BaseException as exc:
+        # streamablehttp_client uses anyio TaskGroups under the hood;
+        # failures bubble up wrapped in BaseExceptionGroup/ExceptionGroup
+        # whose default str() is the unhelpful "unhandled errors in a
+        # TaskGroup". Unwrap so the operator can see what actually broke.
+        detail = _format_exception_chain(exc)
+        logger.exception("zapier_mcp_call_failed", detail=detail)
+        raise ZapierMCPError(f"MCP call failed: {detail}") from exc
 
     # MCP tool results carry content as a list of blocks. Zapier wraps
     # the SQL response in a single text block whose payload is JSON.
@@ -74,6 +79,27 @@ async def execute_snowflake_sql(
 
     rows = _parse_tool_content(result.content)
     return rows
+
+
+def _format_exception_chain(exc: BaseException, depth: int = 0) -> str:
+    """Flatten BaseExceptionGroup / ExceptionGroup hierarchies into a
+    readable list. anyio's TaskGroup wraps real failures one or two
+    levels deep, and str(eg) yields only the generic "unhandled errors
+    in a TaskGroup" message.
+    """
+    if depth > 4:
+        return f"{type(exc).__name__}: <max-depth>"
+
+    inner: list[BaseException] | None = getattr(exc, "exceptions", None)
+    if inner:
+        children = "; ".join(_format_exception_chain(e, depth + 1) for e in inner)
+        return f"{type(exc).__name__}[{children}]"
+
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        return f"{type(exc).__name__}({exc}) ← {_format_exception_chain(cause, depth + 1)}"
+
+    return f"{type(exc).__name__}: {exc}"
 
 
 def _parse_tool_content(content: Any) -> list[dict[str, Any]]:
