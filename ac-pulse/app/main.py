@@ -5,6 +5,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
@@ -36,6 +37,123 @@ configure_audit(SnowflakeClient(settings))
 # Redis is reachable); the first /lookup call resolves it.
 _redis_client: Redis | None = None
 
+INDEX_HTML = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ac-pulse</title>
+  <style>
+    :root { color-scheme: light; --ink:#1f2933; --muted:#667085; --line:#d9e2ec; --bg:#f7f9fc; --panel:#fff; --accent:#0f766e; --risk:#b42318; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    header { padding:24px 28px 14px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:2; }
+    h1 { margin:0; font-size:24px; letter-spacing:0; }
+    .bar { display:flex; gap:12px; align-items:center; margin-top:16px; flex-wrap:wrap; }
+    input { width:min(360px, 100%); padding:10px 12px; border:1px solid #b8c4d4; border-radius:6px; font-size:14px; }
+    button { border:0; border-radius:6px; background:var(--accent); color:white; padding:10px 14px; font-weight:700; cursor:pointer; }
+    main { padding:24px 28px 40px; max-width:1400px; margin:0 auto; }
+    .status { color:var(--muted); font-size:14px; margin-bottom:18px; }
+    .kpis { display:grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap:12px; margin-bottom:22px; }
+    .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+    .label { color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:800; letter-spacing:.04em; }
+    .value { font-size:24px; font-weight:800; margin-top:6px; }
+    table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+    th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:13px; vertical-align:top; }
+    th { background:#eef3f8; color:#334e68; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    tr:last-child td { border-bottom:0; }
+    .num { text-align:right; white-space:nowrap; }
+    .pill { display:inline-block; padding:3px 8px; border-radius:999px; background:#e6fffb; color:#0f766e; font-weight:700; }
+    .pill.risk { background:#fee4e2; color:var(--risk); }
+    .reason { color:var(--muted); max-width:520px; }
+    @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } table { display:block; overflow-x:auto; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ac-pulse</h1>
+    <div class="bar">
+      <input id="rep" value="Kevin Oostema" aria-label="Success rep name" />
+      <button id="load">Load Portfolio</button>
+    </div>
+  </header>
+  <main>
+    <div id="status" class="status">Loading portfolio...</div>
+    <section id="kpis" class="kpis"></section>
+    <table>
+      <thead>
+        <tr>
+          <th>Account</th>
+          <th class="num">ARR</th>
+          <th>Health</th>
+          <th>Action</th>
+          <th>Reason</th>
+          <th class="num">Last TP</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </main>
+  <script>
+    const statusEl = document.getElementById("status");
+    const kpisEl = document.getElementById("kpis");
+    const rowsEl = document.getElementById("rows");
+    const repEl = document.getElementById("rep");
+
+    const money = value => new Intl.NumberFormat("en-US", {
+      style: "currency", currency: "USD", maximumFractionDigits: 0
+    }).format(value || 0);
+
+    function kpi(label, value) {
+      return `<div class="kpi"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+    }
+
+    async function loadPortfolio() {
+      const rep = repEl.value.trim() || "Kevin Oostema";
+      statusEl.textContent = `Loading ${rep}...`;
+      kpisEl.innerHTML = "";
+      rowsEl.innerHTML = "";
+      const response = await fetch(`/portfolio?rep_name=${encodeURIComponent(rep)}`);
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.slice(0, 500));
+      }
+      const data = await response.json();
+      const summary = data.summary;
+      statusEl.textContent = `${data.success_rep_name} portfolio generated at ${new Date(data.generated_at).toLocaleString()}`;
+      kpisEl.innerHTML = [
+        kpi("Accounts", summary.account_count),
+        kpi("Total ARR", money(summary.total_arr)),
+        kpi("Owner Attention", summary.owner_attention_count),
+        kpi("High Churn ARR", money(summary.high_or_very_high_churn_arr)),
+        kpi("Detractor ARR", money(summary.nps_detractor_arr))
+      ].join("");
+      rowsEl.innerHTML = data.accounts.slice(0, 50).map(account => {
+        const command = account.command;
+        const riskClass = ["Critical", "At Risk"].includes(command.health_status) ? " risk" : "";
+        const days = account.touchpoints.days_since_last_touchpoint;
+        return `<tr>
+          <td><strong>${account.account_name || account.account_id}</strong><br><span class="status">${account.plan_tier_name || ""}</span></td>
+          <td class="num">${money(account.arr)}</td>
+          <td><span class="pill${riskClass}">${command.health_status}</span></td>
+          <td>${command.next_best_action}</td>
+          <td class="reason">${command.priority_reason}</td>
+          <td class="num">${days == null ? "None" : `${days}d`}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    document.getElementById("load").addEventListener("click", () => loadPortfolio().catch(showError));
+    function showError(error) {
+      statusEl.textContent = `Unable to load portfolio: ${error.message}`;
+    }
+    loadPortfolio().catch(showError);
+  </script>
+</body>
+</html>
+"""  # noqa: E501
+
 
 def _get_redis() -> Redis:
     global _redis_client
@@ -51,6 +169,11 @@ def _git_sha_from_repo() -> str:
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
     return output.decode("utf-8").strip()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> str:
+    return INDEX_HTML
 
 
 @app.get("/healthz")
