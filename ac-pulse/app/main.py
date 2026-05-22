@@ -93,24 +93,35 @@ async def readyz() -> dict[str, object]:
         logger.exception("readyz_snowflake_ping_failed")
         snowflake_status = {"status": "down", "error": str(exc)[:1000]}
 
-    worker_last_success: dict[str, str | None]
-    try:
-        worker_last_success = await get_last_success_by_worker()
-    except Exception as exc:
-        logger.exception("readyz_worker_lookup_failed")
+    worker_last_success: dict[str, object]
+    if settings.snowflake_backend == "zapier_mcp":
         worker_last_success = {
-            "error": str(exc)[:1000],
+            "status": "skipped",
+            "reason": "audit history requires the direct Snowflake backend",
             "nightly": None,
             "monthly": None,
             "weekly_snapshot": None,
             "on_demand": None,
         }
+    else:
+        try:
+            worker_last_success = dict(await get_last_success_by_worker())
+        except Exception as exc:
+            logger.exception("readyz_worker_lookup_failed")
+            worker_last_success = {
+                "error": str(exc)[:1000],
+                "nightly": None,
+                "monthly": None,
+                "weekly_snapshot": None,
+                "on_demand": None,
+            }
 
     overall = "ok" if snowflake_status["status"] == "ok" else "degraded"
     logger.debug("readyz_check", version=version, status=overall)
     return {
         "status": overall,
         "version": version,
+        "snowflake_backend": settings.snowflake_backend,
         "snowflake": snowflake_status,
         "workers": worker_last_success,
     }
