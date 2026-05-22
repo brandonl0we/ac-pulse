@@ -144,10 +144,17 @@ async def audit_recent() -> dict[str, object]:
 
 @app.get("/portfolio/{rep_name}")
 async def success_rep_portfolio(rep_name: str) -> dict[str, Any]:
-    return await build_success_rep_portfolio(
-        snowflake_client=SnowflakeClient(settings),
-        rep_name=rep_name,
-    )
+    try:
+        return await build_success_rep_portfolio(
+            snowflake_client=SnowflakeClient(settings),
+            rep_name=rep_name,
+        )
+    except Exception as exc:
+        logger.exception("success_rep_portfolio_failed", rep_name=rep_name)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to build portfolio: {str(exc)[:1000]}",
+        ) from exc
 
 
 @app.get("/portfolio")
