@@ -64,12 +64,19 @@ def mock_snowflake_client() -> Any:
     class MockSnowflakeClient:
         def __init__(self) -> None:
             self.responses: list[dict[str, Any]] = []
+            self.execute_many_calls: list[tuple[str, list[dict[str, Any]]]] = []
 
         async def execute(
             self, sql: str, params: dict[str, Any] | None = None
         ) -> list[dict[str, Any]]:
             del sql, params
             return self.responses
+
+        async def execute_many(
+            self, sql: str, rows: list[dict[str, Any]]
+        ) -> int:
+            self.execute_many_calls.append((sql, list(rows)))
+            return len(rows)
 
     return MockSnowflakeClient()
 

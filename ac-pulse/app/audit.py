@@ -65,7 +65,10 @@ async def flush_audit_logs() -> None:
 async def get_recent_audit_rows(limit: int = 100) -> list[dict[str, Any]]:
     if _SNOWFLAKE_CLIENT is None:
         return []
-    sql = f"""
+    # Defensive bound on limit — passed via parameter binding below, but
+    # we still cap it so a caller can't ask for unbounded result sizes.
+    safe_limit = max(1, min(int(limit), 1000))
+    sql = """
 SELECT
     run_id,
     event_ts,
@@ -77,16 +80,15 @@ SELECT
     error_message
 FROM CS_ANALYTICS.AC_PULSE_AUDIT_LOG
 ORDER BY event_ts DESC
-FETCH NEXT {limit} ROWS ONLY
+FETCH NEXT %(limit)s ROWS ONLY
 """
-    return await _SNOWFLAKE_CLIENT.execute(sql)
+    return await _SNOWFLAKE_CLIENT.execute(sql, {"limit": safe_limit})
 
 
 async def get_audit_rows_for_run(run_id: str) -> list[dict[str, Any]]:
     if _SNOWFLAKE_CLIENT is None:
         return []
-    escaped_run_id = _escape_sql_string(run_id)
-    sql = f"""
+    sql = """
 SELECT
     run_id,
     event_ts,
@@ -97,10 +99,10 @@ SELECT
     status,
     error_message
 FROM CS_ANALYTICS.AC_PULSE_AUDIT_LOG
-WHERE run_id = {escaped_run_id}
+WHERE run_id = %(run_id)s
 ORDER BY event_ts DESC
 """
-    return await _SNOWFLAKE_CLIENT.execute(sql)
+    return await _SNOWFLAKE_CLIENT.execute(sql, {"run_id": run_id})
 
 
 async def get_last_success_by_worker() -> dict[str, str | None]:
@@ -149,8 +151,10 @@ async def _flush_rows(rows: list[dict[str, Any]]) -> None:
     if _SNOWFLAKE_CLIENT is None:
         return
 
-    values_clause = ",\n".join(_render_values_tuple(row) for row in rows)
-    sql = f"""
+    # All values are bound via the Snowflake connector's parameter API.
+    # Account_id is cast to NUMBER inside SQL; event_ts arrives as an
+    # ISO string and is cast via TO_TIMESTAMP_NTZ.
+    sql = """
 INSERT INTO CS_ANALYTICS.AC_PULSE_AUDIT_LOG (
     run_id,
     event_ts,
@@ -160,42 +164,27 @@ INSERT INTO CS_ANALYTICS.AC_PULSE_AUDIT_LOG (
     new_value,
     status,
     error_message
-)
-SELECT
-    column1 AS run_id,
-    TO_TIMESTAMP_NTZ(column2) AS event_ts,
-    column3::NUMBER(38,0) AS account_id,
-    column4 AS field_name,
-    column5 AS old_value,
-    column6 AS new_value,
-    column7 AS status,
-    column8 AS error_message
-FROM VALUES
-{values_clause}
+) SELECT
+    %(run_id)s,
+    TO_TIMESTAMP_NTZ(%(event_ts)s),
+    %(account_id)s::NUMBER(38,0),
+    %(field_name)s,
+    %(old_value)s,
+    %(new_value)s,
+    %(status)s,
+    %(error_message)s
 """
-    await _SNOWFLAKE_CLIENT.execute(sql)
-
-
-def _render_values_tuple(row: dict[str, Any]) -> str:
-    fields = [
-        _escape_sql_string(row["run_id"]),
-        _escape_sql_string(row["event_ts"]),
-        str(int(row["account_id"])),
-        _escape_sql_string(row["field_name"]),
-        _escape_sql_string_or_null(row["old_value"]),
-        _escape_sql_string_or_null(row["new_value"]),
-        _escape_sql_string(row["status"]),
-        _escape_sql_string_or_null(row["error_message"]),
+    bound_rows = [
+        {
+            "run_id": row["run_id"],
+            "event_ts": row["event_ts"],
+            "account_id": int(row["account_id"]),
+            "field_name": row["field_name"],
+            "old_value": row.get("old_value"),
+            "new_value": row.get("new_value"),
+            "status": row["status"],
+            "error_message": row.get("error_message"),
+        }
+        for row in rows
     ]
-    return "(" + ", ".join(fields) + ")"
-
-
-def _escape_sql_string(value: str) -> str:
-    escaped = value.replace("'", "''")
-    return f"'{escaped}'"
-
-
-def _escape_sql_string_or_null(value: str | None) -> str:
-    if value is None:
-        return "NULL"
-    return _escape_sql_string(value)
+    await _SNOWFLAKE_CLIENT.execute_many(sql, bound_rows)

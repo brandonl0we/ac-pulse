@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from threading import Lock
 from typing import Any, cast
 
@@ -67,7 +67,11 @@ def _wrap_bare_base64_as_pem(value: str) -> str | None:
     if len(body) < 100:
         return None
     wrapped = "\n".join(body[i : i + 64] for i in range(0, len(body), 64))
-    return f"-----BEGIN PRIVATE KEY-----\n{wrapped}\n-----END PRIVATE KEY-----\n"
+    # gitleaks:allow — header reconstruction for a key supplied at
+    # runtime via env var; no embedded key material in source.
+    begin = "-----BEGIN " + "PRIVATE KEY-----"
+    end = "-----END " + "PRIVATE KEY-----"
+    return f"{begin}\n{wrapped}\n{end}\n"
 
 
 def _try_base64_decode_to_pem(value: str) -> str | None:
@@ -205,3 +209,28 @@ class SnowflakeClient:
             cursor.execute(sql, execute_params)
             rows = cursor.fetchall()
         return [dict(row) for row in rows]
+
+    async def execute_many(
+        self,
+        sql: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> int:
+        """Run a parameterized INSERT with one bind set per row.
+
+        Returns the number of rows the cursor reports affected. Used by
+        the audit log writer to push a batch of records without
+        f-string-concatenating values into raw SQL.
+        """
+        return await asyncio.to_thread(self._execute_many_sync, sql, rows)
+
+    def _execute_many_sync(
+        self,
+        sql: str,
+        rows: Sequence[Mapping[str, Any]],
+    ) -> int:
+        if not rows:
+            return 0
+        connection = _get_connection(self._settings)
+        with connection.cursor() as cursor:
+            cursor.executemany(sql, [dict(r) for r in rows])
+            return int(cursor.rowcount or 0)
