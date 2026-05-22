@@ -51,13 +51,21 @@ async def test_field_writer_updates_only_changed_fields(monkeypatch: pytest.Monk
     monkeypatch.setattr("app.ac_client.field_writer.log_write", fake_log_write)
     api = AsyncMock()
     api.get_account.return_value = {
-        "account": {
-            "fields": [
-                {"field": "cs_priority_tier", "value": "Standard"},
-                {"field": "cs_intervention_due", "value": False},
-                {"field": "cs_snowflake_account_id", "value": 202},
-            ]
-        }
+            "account": {
+                "fields": [
+                    {"field": "cs_priority_tier", "value": "Standard"},
+                    {"field": "cs_intervention_due", "value": False},
+                    {"field": "cs_health_status", "value": "Healthy"},
+                    {"field": "cs_next_best_action", "value": "Maintain normal cadence"},
+                    {
+                        "field": "cs_priority_reason",
+                        "value": "No elevated customer success risk detected.",
+                    },
+                    {"field": "cs_renewal_motion", "value": "Mid-Cycle"},
+                    {"field": "cs_owner_attention", "value": False},
+                    {"field": "cs_snowflake_account_id", "value": 202},
+                ]
+            }
     }
     api.update_account_custom_fields.return_value = {"ok": True}
     writer = FieldWriter(api)
@@ -69,12 +77,25 @@ async def test_field_writer_updates_only_changed_fields(monkeypatch: pytest.Monk
             "account_id": 202,
             "cs_priority_tier": "Critical",
             "cs_intervention_due": False,
+            "cs_health_status": "Critical",
+            "cs_next_best_action": "Prepare renewal save plan",
+            "cs_priority_reason": "Churn band is Very High.",
+            "cs_renewal_motion": "Renewing Soon",
+            "cs_owner_attention": True,
         },
     )
 
     assert result["status"] == "success"
     api.update_account_custom_fields.assert_awaited_once_with(
-        202, {"cs_priority_tier": "Critical"}
+        202,
+        {
+            "cs_priority_tier": "Critical",
+            "cs_health_status": "Critical",
+            "cs_next_best_action": "Prepare renewal save plan",
+            "cs_priority_reason": "Churn band is Very High.",
+            "cs_renewal_motion": "Renewing Soon",
+            "cs_owner_attention": True,
+        },
     )
-    assert len(audit_calls) == 1
+    assert len(audit_calls) == 6
     assert audit_calls[0]["field_name"] == "cs_priority_tier"
