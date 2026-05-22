@@ -150,6 +150,11 @@ async def success_rep_portfolio(rep_name: str) -> dict[str, Any]:
     )
 
 
+@app.get("/portfolio")
+async def success_rep_portfolio_query(rep_name: str = Query(...)) -> dict[str, Any]:
+    return await success_rep_portfolio(rep_name)
+
+
 @app.get("/pulse/{account_id}")
 async def account_pulse(account_id: int) -> dict[str, Any]:
     snowflake_client = SnowflakeClient(settings)
