@@ -4,11 +4,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+import structlog
+
 from app.ac_client.account_resolver import AccountResolver
 from app.audit import get_last_success_for_account
 from app.models import AccountSignals
 from app.transformer import transform_account_signals
 from app.workers.pipeline import SupportsExtract, _merge_extractor_payloads
+
+logger = structlog.get_logger(__name__)
 
 COMMAND_FIELDS = (
     "cs_health_status",
@@ -53,11 +57,16 @@ async def build_account_pulse(
         resolver=resolver,
         snowflake_account_id=snowflake_account_id,
     )
-    last_synced_at = (
-        await get_last_success_for_account(activecampaign_account_id)
-        if activecampaign_account_id is not None
-        else None
-    )
+    last_synced_at = None
+    if activecampaign_account_id is not None:
+        try:
+            last_synced_at = await get_last_success_for_account(activecampaign_account_id)
+        except Exception:
+            logger.exception(
+                "pulse_last_synced_lookup_failed",
+                snowflake_account_id=snowflake_account_id,
+                activecampaign_account_id=activecampaign_account_id,
+            )
 
     return shape_account_pulse(
         signals=signals,
