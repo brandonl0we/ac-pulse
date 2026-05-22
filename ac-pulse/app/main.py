@@ -12,8 +12,15 @@ from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
 from app.audit import configure_audit, get_last_success_by_worker, get_recent_audit_rows
 from app.config import get_settings
+from app.extractors.acai import ACAIExtractor
+from app.extractors.churn import ChurnExtractor
+from app.extractors.nbn import NBNExtractor
+from app.extractors.renewal import RenewalExtractor
+from app.extractors.touchpoints import TouchpointsExtractor
+from app.extractors.utilization import UtilizationExtractor
 from app.logging_setup import configure_logging
 from app.lookup_service import lookup_customer_by_email
+from app.pulse import build_account_pulse, build_account_resolver
 from app.snowflake_client import SnowflakeClient
 from app.workers.on_demand import run_on_demand
 
@@ -123,6 +130,27 @@ async def audit_recent() -> dict[str, object]:
     return {"rows": rows}
 
 
+@app.get("/pulse/{account_id}")
+async def account_pulse(account_id: int) -> dict[str, Any]:
+    snowflake_client = SnowflakeClient(settings)
+    extractors = [
+        ChurnExtractor(snowflake_client),
+        ACAIExtractor(snowflake_client),
+        NBNExtractor(snowflake_client),
+        UtilizationExtractor(snowflake_client),
+        TouchpointsExtractor(snowflake_client),
+        RenewalExtractor(snowflake_client),
+    ]
+    pulse = await build_account_pulse(
+        snowflake_account_id=account_id,
+        extractor_instances=extractors,
+        resolver=build_account_resolver(settings.account_id_map_path),
+    )
+    if pulse is None:
+        raise HTTPException(status_code=404, detail="No account pulse found")
+    return pulse
+
+
 def _require_service_key(provided: str | None) -> None:
     """Shared-secret gate for cross-service endpoints.
 
@@ -220,7 +248,10 @@ class LookupEmailRequest(BaseModel):
 async def lookup_customer_by_email_route(
     body: LookupEmailRequest,
     x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
-    debug: int = Query(default=0, description="Pass ?debug=1 to include raw SQL + Zapier response preview."),
+    debug: int = Query(
+        default=0,
+        description="Pass ?debug=1 to include raw SQL + Zapier response preview.",
+    ),
 ) -> dict[str, Any]:
     """Cross-agent dedupe lookup: is this email an AC customer?
 
