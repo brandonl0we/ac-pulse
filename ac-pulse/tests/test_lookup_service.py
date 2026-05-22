@@ -145,14 +145,30 @@ async def test_lookup_calls_mcp_and_caches(
     redis = FakeRedis()
     captured: dict[str, Any] = {}
 
-    async def fake_execute(*, server_url: str, token: str, statement: str, **kwargs: Any) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    async def fake_execute(
+        *,
+        server_url: str,
+        token: str,
+        statement: str,
+        **kwargs: Any,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         captured["url"] = server_url
         captured["statement"] = statement
-        return [{
-            "record_type": "ACCOUNT", "account_id": 42, "arr": 1000,
-            "match_type": "ADMIN_EMAIL", "discovery_source": "ACCOUNT_EXTENSION",
-            "account_status": "Active Paid",
-        }], {"block_count": 1, "block_types": ["text"], "raw_text_preview": "stub", "parsed_row_count": 1}
+        return [
+            {
+                "record_type": "ACCOUNT",
+                "account_id": 42,
+                "arr": 1000,
+                "match_type": "ADMIN_EMAIL",
+                "discovery_source": "ACCOUNT_EXTENSION",
+                "account_status": "Active Paid",
+            }
+        ], {
+            "block_count": 1,
+            "block_types": ["text"],
+            "raw_text_preview": "stub",
+            "parsed_row_count": 1,
+        }
 
     monkeypatch.setattr("app.lookup_service.execute_snowflake_sql", fake_execute)
 
