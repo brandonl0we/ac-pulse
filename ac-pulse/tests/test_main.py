@@ -22,3 +22,75 @@ async def test_resync_runs_on_demand_directly(monkeypatch: pytest.MonkeyPatch) -
 
     assert result["account_id"] == 42
     assert result["summary"]["run_id"] == "on_demand-1"
+
+
+@pytest.mark.asyncio
+async def test_account_pulse_returns_built_pulse(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeExtractor:
+        def __init__(self, sf: FakeSnowflakeClient) -> None:
+            self.sf = sf
+
+    async def fake_build_account_pulse(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["snowflake_account_id"] == 42
+        assert len(list(kwargs["extractor_instances"])) == 6
+        return {
+            "snowflake_account_id": 42,
+            "activecampaign_account_id": 202,
+            "command": {"health_status": "Critical"},
+            "metrics": {},
+        }
+
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ChurnExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "ACAIExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "NBNExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "UtilizationExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "TouchpointsExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "RenewalExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "build_account_resolver", lambda path: None)
+    monkeypatch.setattr(main, "build_account_pulse", fake_build_account_pulse)
+
+    result = await main.account_pulse(42)
+
+    assert result["snowflake_account_id"] == 42
+    assert result["activecampaign_account_id"] == 202
+
+
+@pytest.mark.asyncio
+async def test_account_pulse_raises_404_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi import HTTPException
+
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeExtractor:
+        def __init__(self, sf: FakeSnowflakeClient) -> None:
+            self.sf = sf
+
+    async def fake_build_account_pulse(**kwargs: Any) -> None:
+        del kwargs
+        return None
+
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ChurnExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "ACAIExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "NBNExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "UtilizationExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "TouchpointsExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "RenewalExtractor", FakeExtractor)
+    monkeypatch.setattr(main, "build_account_resolver", lambda path: None)
+    monkeypatch.setattr(main, "build_account_pulse", fake_build_account_pulse)
+
+    with pytest.raises(HTTPException) as exc:
+        await main.account_pulse(404)
+
+    assert exc.value.status_code == 404
