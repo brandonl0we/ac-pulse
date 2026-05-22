@@ -87,3 +87,36 @@ async def test_build_account_pulse_returns_none_when_no_signals() -> None:
     )
 
     assert pulse is None
+
+
+@pytest.mark.asyncio
+async def test_build_account_pulse_tolerates_missing_audit_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_get_last_success_for_account(account_id: int) -> str:
+        assert account_id == 202
+        raise RuntimeError("audit schema unavailable")
+
+    monkeypatch.setattr(
+        "app.pulse.get_last_success_for_account",
+        fake_get_last_success_for_account,
+    )
+
+    pulse = await build_account_pulse(
+        snowflake_account_id=42,
+        extractor_instances=[
+            FakeExtractor(
+                {
+                    42: {
+                        "account_id": 42,
+                        "churn_decile_band": "Low",
+                    }
+                }
+            )
+        ],
+        resolver=FakeResolver(),
+    )
+
+    assert pulse is not None
+    assert pulse["activecampaign_account_id"] == 202
+    assert pulse["last_synced_at"] is None
