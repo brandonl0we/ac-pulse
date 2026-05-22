@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # Lookup-result cache TTL. 1 hour by default — repeat dedupe of the
     # same email within an hour skips Zapier entirely.
     lookup_cache_ttl_seconds: int = Field(default=3600, alias="LOOKUP_CACHE_TTL_SECONDS")
+    # Heartbeat — an hourly cron exercises /lookup against this email
+    # so we catch Zapier outages / token expirations / SQL regressions
+    # before they hit production traffic. Skipped when unset. Use a
+    # known active AC customer or an employee email guaranteed to be
+    # in the warehouse.
+    heartbeat_test_email: str | None = Field(default=None, alias="HEARTBEAT_TEST_EMAIL")
 
     account_id_map_path: Path = Field(alias="ACCOUNT_ID_MAP_PATH")
     git_sha: str | None = Field(default=None, alias="GIT_SHA")

@@ -150,16 +150,24 @@ async def lookup_customer_by_email(
     settings: Settings,
     redis: Redis,
     email: str,
+    *,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
-    """End-to-end dedupe lookup. Cache → MCP → shape → cache → return."""
+    """End-to-end dedupe lookup. Cache → MCP → shape → cache → return.
+
+    Set force_refresh=True to skip the cache read but still update it
+    after the MCP call returns. Used by the heartbeat cron so each run
+    actually exercises the wire instead of replaying cached results.
+    """
     started = time.monotonic()
     normalized = email.strip().lower()
 
-    cached = await _get_cached(redis, normalized)
-    if cached is not None:
-        cached["cached"] = True
-        cached["elapsed_ms"] = int((time.monotonic() - started) * 1000)
-        return cached
+    if not force_refresh:
+        cached = await _get_cached(redis, normalized)
+        if cached is not None:
+            cached["cached"] = True
+            cached["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+            return cached
 
     if not settings.zapier_mcp_url or not settings.zapier_mcp_token:
         # Backend not configured — return a fail-closed answer so calling
