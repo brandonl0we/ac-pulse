@@ -25,6 +25,10 @@
     {
       "path": "/readyz",
       "description": "Dependency readiness check — pings Snowflake. Useful for post-deploy validation. No auth required (read-only diagnostics)."
+    },
+    {
+      "path": "/portfolio/{rep_name}",
+      "description": "Read-only success-rep book-of-business command center. Returns portfolio summary and prioritized account queue from Snowflake via the configured backend."
     }
   ]
 }
