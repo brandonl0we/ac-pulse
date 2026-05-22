@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -13,6 +14,13 @@ class Settings(BaseSettings):
         env_ignore_empty=True,
     )
 
+    # Snowflake backend. Use direct for production and zapier_mcp for
+    # POC/dev environments where Spark egress is not yet whitelisted.
+    snowflake_backend: Literal["direct", "zapier_mcp"] = Field(
+        default="direct",
+        alias="SNOWFLAKE_BACKEND",
+    )
+
     # Snowflake JWT (key-pair) auth — the canonical AC path.
     # Defaults match the official DEAL_CONDUCTOR_SVC user on FM00411.
     # The private key (PEM-encoded) comes from SNOWFLAKE_API_KEY; it's
@@ -20,7 +28,7 @@ class Settings(BaseSettings):
     # default but can be overridden via env.
     snowflake_account: str = Field(default="FM00411", alias="SNOWFLAKE_ACCOUNT")
     snowflake_user: str = Field(default="DEAL_CONDUCTOR_SVC", alias="SNOWFLAKE_USER")
-    snowflake_private_key: str = Field(alias="SNOWFLAKE_API_KEY")
+    snowflake_private_key: str | None = Field(default=None, alias="SNOWFLAKE_API_KEY")
     snowflake_warehouse: str = Field(default="AC_CONSOLIDATED", alias="SNOWFLAKE_WAREHOUSE")
     snowflake_database: str = Field(default="AC", alias="SNOWFLAKE_DATABASE")
     snowflake_schema: str = Field(default="CONFORMED_DIMENSIONS", alias="SNOWFLAKE_SCHEMA")
