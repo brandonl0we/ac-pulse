@@ -105,6 +105,26 @@ ORDER BY event_ts DESC
     return await _SNOWFLAKE_CLIENT.execute(sql, {"run_id": run_id})
 
 
+async def get_last_success_for_account(account_id: int) -> str | None:
+    if _SNOWFLAKE_CLIENT is None:
+        return None
+
+    sql = """
+SELECT
+    MAX(event_ts) AS last_success_ts
+FROM CS_ANALYTICS.AC_PULSE_AUDIT_LOG
+WHERE account_id = %(account_id)s
+AND status = 'success'
+"""
+    rows = await _SNOWFLAKE_CLIENT.execute(sql, {"account_id": account_id})
+    if not rows:
+        return None
+    value = rows[0].get("LAST_SUCCESS_TS")
+    if value is None:
+        return None
+    return str(value)
+
+
 async def get_last_success_by_worker() -> dict[str, str | None]:
     if _SNOWFLAKE_CLIENT is None:
         return {"nightly": None, "monthly": None, "weekly_snapshot": None, "on_demand": None}
