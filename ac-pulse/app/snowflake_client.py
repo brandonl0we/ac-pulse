@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives import serialization
 from snowflake.connector import SnowflakeConnection
 
 from app.config import Settings
+from app.zapier_client import execute_snowflake_sql
 
 _CONNECTION: SnowflakeConnection | None = None
 _CONNECTION_LOCK = Lock()
@@ -162,6 +163,11 @@ def _load_private_key_der(pem: str) -> bytes:
 
 def _get_private_key_der(settings: Settings) -> bytes:
     global _PRIVATE_KEY_DER
+    if not settings.snowflake_private_key:
+        raise ValueError(
+            "SNOWFLAKE_API_KEY not configured; direct Snowflake path is unavailable. "
+            "Set SNOWFLAKE_BACKEND=zapier_mcp for POC reads through Zapier MCP."
+        )
     with _PRIVATE_KEY_LOCK:
         if _PRIVATE_KEY_DER is None:
             _PRIVATE_KEY_DER = _load_private_key_der(settings.snowflake_private_key)
@@ -196,7 +202,36 @@ class SnowflakeClient:
         sql: str,
         params: Mapping[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
+        if self._settings.snowflake_backend == "zapier_mcp":
+            return await self._execute_zapier_mcp(sql, params)
         return await asyncio.to_thread(self._execute_sync, sql, params)
+
+    async def _execute_zapier_mcp(
+        self,
+        sql: str,
+        params: Mapping[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        if not self._settings.zapier_mcp_url or not self._settings.zapier_mcp_token:
+            raise ValueError(
+                "ZAPIER_MCP_URL and ZAPIER_MCP_TOKEN are required when "
+                "SNOWFLAKE_BACKEND=zapier_mcp"
+            )
+
+        statement = _render_zapier_statement(sql, params)
+        rows, _debug = await execute_snowflake_sql(
+            server_url=self._settings.zapier_mcp_url,
+            token=self._settings.zapier_mcp_token,
+            statement=statement,
+            output_hint=(
+                "Return every row from this read-only Snowflake query as JSON objects. "
+                "Preserve all result columns and do not filter rows."
+            ),
+            instructions=(
+                "Read-only Snowflake query for ac-pulse. Return the complete result set "
+                "with stable column names so downstream extractors can parse it."
+            ),
+        )
+        return [_normalize_row_keys(row) for row in rows]
 
     def _execute_sync(
         self,
@@ -221,6 +256,11 @@ class SnowflakeClient:
         the audit log writer to push a batch of records without
         f-string-concatenating values into raw SQL.
         """
+        if self._settings.snowflake_backend == "zapier_mcp":
+            raise NotImplementedError(
+                "Snowflake execute_many is not supported through Zapier MCP. "
+                "Use SNOWFLAKE_BACKEND=direct for write/audit jobs."
+            )
         return await asyncio.to_thread(self._execute_many_sync, sql, rows)
 
     def _execute_many_sync(
@@ -234,3 +274,30 @@ class SnowflakeClient:
         with connection.cursor() as cursor:
             cursor.executemany(sql, [dict(r) for r in rows])
             return int(cursor.rowcount or 0)
+
+
+def _render_zapier_statement(
+    sql: str,
+    params: Mapping[str, Any] | None,
+) -> str:
+    if not params:
+        return sql
+    rendered = sql
+    for key, value in params.items():
+        rendered = rendered.replace(f"%({key})s", _sql_literal(value))
+    return rendered
+
+
+def _sql_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int | float):
+        return str(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _normalize_row_keys(row: dict[str, Any]) -> dict[str, Any]:
+    return {key.upper() if isinstance(key, str) else key: value for key, value in row.items()}
