@@ -2,7 +2,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.ac_client.field_bootstrap import AccountFieldBootstrapper, RequiredAccountField
+from app.ac_client.field_bootstrap import (
+    REQUIRED_ACCOUNT_FIELDS,
+    AccountFieldBootstrapper,
+    RequiredAccountField,
+)
 
 
 @pytest.mark.asyncio
@@ -44,3 +48,13 @@ async def test_bootstrap_skips_when_all_fields_exist() -> None:
     api.create_account_custom_field.assert_not_awaited()
     assert summary["created"] == []
     assert summary["required_total"] == 2
+
+
+def test_required_account_fields_include_cs_command_fields() -> None:
+    fields = {field.name: field for field in REQUIRED_ACCOUNT_FIELDS}
+
+    assert fields["cs_health_status"].field_type == "text"
+    assert fields["cs_next_best_action"].field_type == "text"
+    assert fields["cs_priority_reason"].field_type == "textarea"
+    assert fields["cs_renewal_motion"].field_type == "text"
+    assert fields["cs_owner_attention"].field_type == "checkbox"
