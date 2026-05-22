@@ -220,6 +220,7 @@ class LookupEmailRequest(BaseModel):
 async def lookup_customer_by_email_route(
     body: LookupEmailRequest,
     x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+    debug: int = Query(default=0, description="Pass ?debug=1 to include raw SQL + Zapier response preview."),
 ) -> dict[str, Any]:
     """Cross-agent dedupe lookup: is this email an AC customer?
 
@@ -251,6 +252,8 @@ async def lookup_customer_by_email_route(
         settings=settings,
         redis=_get_redis(),
         email=body.email,
+        force_refresh=bool(debug),  # bypass cache when debugging
+        debug=bool(debug),
     )
 
 

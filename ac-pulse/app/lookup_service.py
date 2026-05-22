@@ -152,12 +152,18 @@ async def lookup_customer_by_email(
     email: str,
     *,
     force_refresh: bool = False,
+    debug: bool = False,
 ) -> dict[str, Any]:
     """End-to-end dedupe lookup. Cache → MCP → shape → cache → return.
 
     Set force_refresh=True to skip the cache read but still update it
     after the MCP call returns. Used by the heartbeat cron so each run
     actually exercises the wire instead of replaying cached results.
+
+    Set debug=True to include `_debug` info in the response: the SQL
+    sent to Zapier (first 500 chars), a preview of the raw response,
+    and content-block metadata. Use when results are unexpectedly
+    empty so we can see what Zapier actually sent back.
     """
     started = time.monotonic()
     normalized = email.strip().lower()
@@ -170,8 +176,6 @@ async def lookup_customer_by_email(
             return cached
 
     if not settings.zapier_mcp_url or not settings.zapier_mcp_token:
-        # Backend not configured — return a fail-closed answer so calling
-        # agents don't accidentally treat "no answer" as "not a customer".
         return {
             "input_email": normalized,
             "is_customer": None,
@@ -196,7 +200,7 @@ async def lookup_customer_by_email(
         }
 
     try:
-        rows = await execute_snowflake_sql(
+        rows, mcp_debug = await execute_snowflake_sql(
             server_url=settings.zapier_mcp_url,
             token=settings.zapier_mcp_token,
             statement=sql,
@@ -222,6 +226,14 @@ async def lookup_customer_by_email(
     payload["cached"] = False
     payload["source"] = "zapier_mcp"
     payload["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+
+    if debug:
+        payload["_debug"] = {
+            "sql_length": len(sql),
+            "sql_preview": sql[:500],
+            "output_hint": _OUTPUT_HINT,
+            **mcp_debug,
+        }
 
     await _set_cached(redis, normalized, payload, settings.lookup_cache_ttl_seconds)
     return payload

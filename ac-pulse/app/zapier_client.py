@@ -19,32 +19,13 @@ async def execute_snowflake_sql(
     *,
     output_hint: str,
     instructions: str = "",
-) -> list[dict[str, Any]]:
-    """Call Zapier MCP's snowflake_execute_sql tool and return the row list.
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Call Zapier MCP's snowflake_execute_sql tool.
 
-    Opens a fresh streamable HTTP session per call. Per-call cost is the
-    session initialize handshake (~100-300ms) plus the SQL execution
-    time. For workloads that need lower overhead we'd cache the session,
-    but for dedupe lookups the simplicity of "open/use/close" outweighs
-    the session-reuse complexity (and is what the Zapier docs ship).
-
-    Args:
-      server_url: Zapier MCP server URL for the tenant.
-      token: Bearer token for the MCP server.
-      statement: Full SQL string. Email/domain interpolation must happen
-        upstream; this function does no string substitution.
-      output_hint: REQUIRED by Zapier. Natural-language description of
-        the columns to return. To preserve every column, list them all
-        explicitly — Zapier's filter otherwise drops anything you didn't
-        explicitly name.
-      instructions: Optional natural-language context for the call.
-
-    Returns:
-      List of row dicts (one per result row). Empty list when the SQL
-      returned no rows.
-
-    Raises:
-      ZapierMCPError: when the call fails or the result can't be parsed.
+    Returns (parsed_rows, debug_info). debug_info contains the first 500
+    chars of the raw response and block counts — surfaced through the
+    /lookup endpoint when ?debug=1 is passed so we can see what Zapier
+    actually sent back without scraping container logs.
     """
     headers = {"Authorization": f"Bearer {token}"}
     try:
@@ -64,21 +45,38 @@ async def execute_snowflake_sql(
                     },
                 )
     except BaseException as exc:
-        # streamablehttp_client uses anyio TaskGroups under the hood;
-        # failures bubble up wrapped in BaseExceptionGroup/ExceptionGroup
-        # whose default str() is the unhelpful "unhandled errors in a
-        # TaskGroup". Unwrap so the operator can see what actually broke.
         detail = _format_exception_chain(exc)
         logger.exception("zapier_mcp_call_failed", detail=detail)
         raise ZapierMCPError(f"MCP call failed: {detail}") from exc
 
-    # MCP tool results carry content as a list of blocks. Zapier wraps
-    # the SQL response in a single text block whose payload is JSON.
     if getattr(result, "isError", False):
         raise ZapierMCPError(f"tool returned error: {result.content!r}")
 
+    debug_info: dict[str, Any] = {
+        "block_count": len(result.content) if result.content else 0,
+        "block_types": [getattr(b, "type", "?") for b in (result.content or [])],
+        "raw_text_preview": _preview_raw_text(result.content),
+    }
     rows = _parse_tool_content(result.content)
-    return rows
+    debug_info["parsed_row_count"] = len(rows)
+    return rows, debug_info
+
+
+def _preview_raw_text(content: Any) -> str:
+    """First 800 chars of concatenated text-block payloads, for /lookup
+    debug output. Truncates so we don't leak large datasets into HTTP
+    responses but keep enough to see Zapier's response shape."""
+    if not content:
+        return ""
+    parts: list[str] = []
+    for block in content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str):
+            parts.append(text)
+    joined = "\n---\n".join(parts)
+    if len(joined) > 800:
+        return joined[:800] + f"... [truncated, total {len(joined)} chars]"
+    return joined
 
 
 def _format_exception_chain(exc: BaseException, depth: int = 0) -> str:
