@@ -18,6 +18,7 @@ uv run uvicorn app.main:app --reload
 
 - `GET /healthz`
 - `POST /resync/{account_id}`
+- `GET /pulse/{account_id}` (read-only account health narrative)
 - `GET /audit/recent`
 - `POST /admin/bootstrap-account-fields` (create required AC account custom fields)
 
@@ -43,4 +44,9 @@ This service writes the following account custom fields (created automatically b
 - `renewal_date`
 - `cs_priority_tier`
 - `cs_intervention_due`
+- `cs_health_status`
+- `cs_next_best_action`
+- `cs_priority_reason`
+- `cs_renewal_motion`
+- `cs_owner_attention`
 - `cs_snowflake_account_id`
