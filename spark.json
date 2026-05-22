@@ -17,6 +17,14 @@
     {
       "path": "/admin/smoke-snowflake",
       "description": "Snowflake JWT smoke test — gated by X-Service-Key. Bypasses CF Access so other agents (and curl) can hit it via hooks.ac-spark.com."
+    },
+    {
+      "path": "/lookup/customer-by-email",
+      "description": "Cross-agent dedupe lookup. POST {email:'...'} with X-Service-Key. Returns the customer-footprint shape (is_customer, exact matches, by-record-type, summary). Backed by Zapier MCP today; will swap to direct Snowflake once the egress IP is whitelisted."
+    },
+    {
+      "path": "/readyz",
+      "description": "Dependency readiness check — pings Snowflake. Useful for post-deploy validation. No auth required (read-only diagnostics)."
     }
   ]
 }

@@ -40,8 +40,20 @@ class Settings(BaseSettings):
 
     # Shared secret for inter-service calls. Set in Spark; other agents
     # pass it via X-Service-Key header to call /admin/smoke-snowflake
-    # (and future lookup endpoints). When unset, those endpoints 503.
+    # and /lookup/* endpoints. When unset, those endpoints 503.
     service_api_key: str | None = Field(default=None, alias="SERVICE_API_KEY")
+
+    # Zapier MCP — fallback path to Snowflake while the direct JWT
+    # connection's egress IP is blocked by network policy. Other Spark
+    # agents (Rival Radar, two-bucket-prospecting-agent) call
+    # /lookup/customer-by-email; ac-pulse proxies through Zapier MCP
+    # to BI's pre-authed Snowflake connection. When the direct
+    # connection is unblocked we'll swap the backend transparently.
+    zapier_mcp_url: str | None = Field(default=None, alias="ZAPIER_MCP_URL")
+    zapier_mcp_token: str | None = Field(default=None, alias="ZAPIER_MCP_TOKEN")
+    # Lookup-result cache TTL. 1 hour by default — repeat dedupe of the
+    # same email within an hour skips Zapier entirely.
+    lookup_cache_ttl_seconds: int = Field(default=3600, alias="LOOKUP_CACHE_TTL_SECONDS")
 
     account_id_map_path: Path = Field(alias="ACCOUNT_ID_MAP_PATH")
     git_sha: str | None = Field(default=None, alias="GIT_SHA")

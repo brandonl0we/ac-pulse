@@ -31,6 +31,12 @@ def settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
         "LOG_LEVEL": "INFO",
         "ACCOUNT_ID_MAP_PATH": "./data/account_id_map.csv",
         "GIT_SHA": "deadbee",
+        # Lookup-service env vars; dummy values are fine because the
+        # tests that exercise lookup_service mock the MCP call.
+        "SERVICE_API_KEY": "test-service-key",
+        "ZAPIER_MCP_URL": "https://mcp.example.test/zapier",
+        "ZAPIER_MCP_TOKEN": "test-zapier-token",
+        "LOOKUP_CACHE_TTL_SECONDS": "60",
     }
     for key, value in env.items():
         monkeypatch.setenv(key, value)

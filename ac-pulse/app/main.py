@@ -5,12 +5,15 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel, Field
+from redis.asyncio import Redis
 
 from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
 from app.audit import configure_audit, get_last_success_by_worker, get_recent_audit_rows
 from app.config import get_settings
 from app.logging_setup import configure_logging
+from app.lookup_service import lookup_customer_by_email
 from app.snowflake_client import SnowflakeClient
 from app.workers.on_demand import run_on_demand
 
@@ -19,6 +22,18 @@ configure_logging(settings.log_level)
 logger = structlog.get_logger(__name__)
 app = FastAPI(title="ac-pulse", version="0.1.0")
 configure_audit(SnowflakeClient(settings))
+
+# Lazy Redis client for the lookup-result cache. We don't open a
+# connection at module load (Spark may start the web process before
+# Redis is reachable); the first /lookup call resolves it.
+_redis_client: Redis | None = None
+
+
+def _get_redis() -> Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+    return _redis_client
 
 
 def _git_sha_from_repo() -> str:
@@ -195,6 +210,48 @@ async def smoke_snowflake(
         "elapsed_ms": elapsed_ms,
         "rows": rows,
     }
+
+
+class LookupEmailRequest(BaseModel):
+    email: str = Field(..., min_length=3, description="Email address to dedupe-check.")
+
+
+@app.post("/lookup/customer-by-email")
+async def lookup_customer_by_email_route(
+    body: LookupEmailRequest,
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, Any]:
+    """Cross-agent dedupe lookup: is this email an AC customer?
+
+    Six-source footprint check against the Snowflake warehouse. Backed
+    today by Zapier MCP (BI's pre-authed Snowflake connection); will
+    swap to direct Snowflake once the network policy whitelists the
+    Spark egress IP. Callers get the same response shape either way.
+
+    Response shape (see app/lookup_service.shape_response):
+      {
+        "input_email": "user@company.com",
+        "input_domain": "company.com",
+        "is_customer": true,            // any Active Paid account match
+        "is_known": true,               // any hit at all
+        "highest_value_match": {...},   // best ACCOUNT row by ARR, if any
+        "exact_email_matches": [...],
+        "by_record_type": {ACCOUNT: [...], DEAL: [...], CONTACT: [...], ORG: [...]},
+        "summary": {accounts, deals, contacts, orgs, active_paid_accounts},
+        "cached": false,
+        "elapsed_ms": 1234,
+        "source": "zapier_mcp"
+      }
+
+    Failure modes return is_customer=null + reason=lookup_unavailable so
+    calling agents fail-closed (don't email someone we can't dedupe).
+    """
+    _require_service_key(x_service_key)
+    return await lookup_customer_by_email(
+        settings=settings,
+        redis=_get_redis(),
+        email=body.email,
+    )
 
 
 @app.post("/admin/bootstrap-account-fields")
