@@ -95,6 +95,23 @@ async def test_success_rep_portfolio_returns_built_portfolio(
 
 
 @pytest.mark.asyncio
+async def test_success_rep_portfolio_query_route_reuses_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    async def fake_success_rep_portfolio(rep_name: str) -> dict[str, Any]:
+        assert rep_name == "Kevin Oostema"
+        return {"success_rep_name": rep_name, "accounts": []}
+
+    monkeypatch.setattr(main, "success_rep_portfolio", fake_success_rep_portfolio)
+
+    result = await main.success_rep_portfolio_query("Kevin Oostema")
+
+    assert result["success_rep_name"] == "Kevin Oostema"
+
+
+@pytest.mark.asyncio
 async def test_account_pulse_raises_404_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import HTTPException
 
