@@ -27,6 +27,11 @@ REQUIRED_ACCOUNT_FIELDS: tuple[RequiredAccountField, ...] = (
     RequiredAccountField("renewal_date", "Renewal Date", "date"),
     RequiredAccountField("cs_priority_tier", "CS Priority Tier", "text"),
     RequiredAccountField("cs_intervention_due", "CS Intervention Due", "checkbox"),
+    RequiredAccountField("cs_health_status", "CS Health Status", "text"),
+    RequiredAccountField("cs_next_best_action", "CS Next Best Action", "text"),
+    RequiredAccountField("cs_priority_reason", "CS Priority Reason", "textarea"),
+    RequiredAccountField("cs_renewal_motion", "CS Renewal Motion", "text"),
+    RequiredAccountField("cs_owner_attention", "CS Owner Attention", "checkbox"),
     RequiredAccountField("cs_snowflake_account_id", "Snowflake Account ID", "number"),
 )
 
