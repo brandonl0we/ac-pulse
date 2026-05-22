@@ -183,6 +183,37 @@ async def test_lookup_fails_closed_when_mcp_errors(
     assert "boom" in out["error"]
 
 
+# ── Zapier response-shape regression test ────────────────────────────
+
+def test_extract_rows_handles_zapier_results_list_shape() -> None:
+    """Zapier's snowflake_execute_sql returns {"results": [{...}]} —
+    a list directly under "results", not a nested {"rows": [...]}.
+    Regression test for the bug where /lookup returned empty for known
+    customers because the parser only recognized {"results": {"rows": ...}}."""
+    from app.zapier_client import _extract_rows
+
+    payload = {
+        "results": [
+            {
+                "record_type": "ACCOUNT",
+                "account_id": 4129021,
+                "matched_email": "admin@example.com",
+                "account_status": "Active Paid",
+            },
+            {
+                "record_type": "DEAL",
+                "deal_id": 99,
+                "matched_email": "lead@example.com",
+            },
+        ]
+    }
+    rows = _extract_rows(payload)
+    assert rows is not None
+    assert len(rows) == 2
+    assert rows[0]["account_id"] == 4129021
+    assert rows[1]["deal_id"] == 99
+
+
 @pytest.mark.asyncio
 async def test_lookup_rejects_invalid_email(settings: Settings) -> None:
     redis = FakeRedis()

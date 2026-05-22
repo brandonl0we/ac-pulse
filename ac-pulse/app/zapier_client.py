@@ -140,10 +140,15 @@ def _extract_rows(payload: Any) -> list[dict[str, Any]] | None:
         return None
     if "rows" in payload and isinstance(payload["rows"], list):
         return [r for r in payload["rows"] if isinstance(r, dict)]
-    if "results" in payload and isinstance(payload["results"], dict):
-        results = payload["results"]
-        if "rows" in results and isinstance(results["rows"], list):
-            return [r for r in results["rows"] if isinstance(r, dict)]
+    # Zapier returns SQL results as {"results": [{...}, ...]} — a list
+    # directly under "results", not a nested {"rows": [...]} dict.
+    # Tolerate both shapes for resilience to format drift.
+    if "results" in payload:
+        inner = payload["results"]
+        if isinstance(inner, list):
+            return [r for r in inner if isinstance(r, dict)]
+        if isinstance(inner, dict) and isinstance(inner.get("rows"), list):
+            return [r for r in inner["rows"] if isinstance(r, dict)]
     if "data" in payload and isinstance(payload["data"], list):
         return [r for r in payload["data"] if isinstance(r, dict)]
     return None
