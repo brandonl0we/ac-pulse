@@ -63,6 +63,38 @@ async def test_account_pulse_returns_built_pulse(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_success_rep_portfolio_returns_built_portfolio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["snowflake_client"], FakeSnowflakeClient)
+        assert kwargs["rep_name"] == "Kevin Oostema"
+        return {
+            "success_rep_name": "Kevin Oostema",
+            "summary": {"account_count": 197},
+            "accounts": [],
+        }
+
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+
+    result = await main.success_rep_portfolio("Kevin Oostema")
+
+    assert result["success_rep_name"] == "Kevin Oostema"
+    assert result["summary"]["account_count"] == 197
+
+
+@pytest.mark.asyncio
 async def test_account_pulse_raises_404_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     from fastapi import HTTPException
 
