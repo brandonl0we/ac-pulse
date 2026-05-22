@@ -29,21 +29,23 @@ async def execute_snowflake_sql(
     """
     headers = {"Authorization": f"Bearer {token}"}
     try:
-        async with streamablehttp_client(server_url, headers=headers) as (
-            read_stream,
-            write_stream,
-            _,
+        async with (
+            streamablehttp_client(server_url, headers=headers) as (
+                read_stream,
+                write_stream,
+                _,
+            ),
+            ClientSession(read_stream, write_stream) as session,
         ):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                result = await session.call_tool(
-                    "snowflake_execute_sql",
-                    arguments={
-                        "statement": statement,
-                        "output_hint": output_hint,
-                        "instructions": instructions,
-                    },
-                )
+            await session.initialize()
+            result = await session.call_tool(
+                "snowflake_execute_sql",
+                arguments={
+                    "statement": statement,
+                    "output_hint": output_hint,
+                    "instructions": instructions,
+                },
+            )
     except BaseException as exc:
         detail = _format_exception_chain(exc)
         logger.exception("zapier_mcp_call_failed", detail=detail)
