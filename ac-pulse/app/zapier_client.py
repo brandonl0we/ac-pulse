@@ -148,6 +148,13 @@ def _extract_rows(payload: Any) -> list[dict[str, Any]] | None:
     if "results" in payload:
         inner = payload["results"]
         if isinstance(inner, list):
+            if (
+                len(inner) == 1
+                and isinstance(inner[0], dict)
+                and "rows" in inner[0]
+                and isinstance(inner[0]["rows"], list)
+            ):
+                return [r for r in inner[0]["rows"] if isinstance(r, dict)]
             return [r for r in inner if isinstance(r, dict)]
         if isinstance(inner, dict) and isinstance(inner.get("rows"), list):
             return [r for r in inner["rows"] if isinstance(r, dict)]
