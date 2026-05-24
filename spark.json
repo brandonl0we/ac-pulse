@@ -29,6 +29,10 @@
     {
       "path": "/portfolio",
       "description": "Read-only success-rep book-of-business command center. Pass rep_name as a query parameter. Returns portfolio summary and prioritized account queue from Snowflake via the configured backend."
+    },
+    {
+      "path": "/actions/plan",
+      "description": "Dry-run customer success action planner. POST rep_name, optional account_ids, and limit. Returns deterministic planned tasks/notes without writing to ActiveCampaign."
     }
   ]
 }
