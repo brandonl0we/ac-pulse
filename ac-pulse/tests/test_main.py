@@ -4,6 +4,17 @@ import pytest
 
 
 @pytest.mark.asyncio
+async def test_index_returns_portfolio_shell() -> None:
+    from app import main
+
+    html = await main.index()
+
+    assert "ac-pulse" in html
+    assert "/portfolio?rep_name=" in html
+    assert "Kevin Oostema" in html
+
+
+@pytest.mark.asyncio
 async def test_resync_runs_on_demand_directly(monkeypatch: pytest.MonkeyPatch) -> None:
     from app import main
 
@@ -109,6 +120,56 @@ async def test_success_rep_portfolio_query_route_reuses_builder(
     result = await main.success_rep_portfolio_query("Kevin Oostema")
 
     assert result["success_rep_name"] == "Kevin Oostema"
+
+
+@pytest.mark.asyncio
+async def test_plan_actions_builds_dry_run_from_portfolio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["snowflake_client"], FakeSnowflakeClient)
+        assert kwargs["rep_name"] == "Kevin Oostema"
+        return {
+            "success_rep_name": "Kevin Oostema",
+            "summary": {"account_count": 1},
+            "accounts": [{"account_id": 42}],
+        }
+
+    def fake_build_action_plan(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["portfolio"]["success_rep_name"] == "Kevin Oostema"
+        assert kwargs["account_ids"] == [42]
+        assert kwargs["limit"] == 10
+        return {
+            "mode": "dry_run",
+            "summary": {"planned_actions": 1},
+            "actions": [{"snowflake_account_id": 42}],
+            "skipped": [],
+        }
+
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+    monkeypatch.setattr(main, "build_action_plan", fake_build_action_plan)
+
+    result = await main.plan_actions(
+        main.ActionPlanRequest(
+            rep_name="Kevin Oostema",
+            account_ids=[42],
+            limit=10,
+        )
+    )
+
+    assert result["mode"] == "dry_run"
+    assert result["actions"][0]["snowflake_account_id"] == 42
 
 
 @pytest.mark.asyncio
