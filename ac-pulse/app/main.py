@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 
 from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
+from app.actions import build_action_plan
 from app.audit import configure_audit, get_last_success_by_worker, get_recent_audit_rows
 from app.config import get_settings
 from app.extractors.acai import ACAIExtractor
@@ -397,6 +398,33 @@ async def smoke_snowflake(
 
 class LookupEmailRequest(BaseModel):
     email: str = Field(..., min_length=3, description="Email address to dedupe-check.")
+
+
+class ActionPlanRequest(BaseModel):
+    rep_name: str = Field(default="Kevin Oostema", min_length=1)
+    account_ids: list[int] | None = None
+    limit: int = Field(default=25, ge=1, le=100)
+
+
+@app.post("/actions/plan")
+async def plan_actions(body: ActionPlanRequest) -> dict[str, Any]:
+    try:
+        portfolio = await build_success_rep_portfolio(
+            snowflake_client=SnowflakeClient(settings),
+            rep_name=body.rep_name,
+        )
+    except Exception as exc:
+        logger.exception("action_plan_portfolio_failed", rep_name=body.rep_name)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to build action plan: {str(exc)[:1000]}",
+        ) from exc
+
+    return build_action_plan(
+        portfolio=portfolio,
+        account_ids=body.account_ids,
+        limit=body.limit,
+    )
 
 
 @app.post("/lookup/customer-by-email")
