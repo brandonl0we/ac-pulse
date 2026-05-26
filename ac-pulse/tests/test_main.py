@@ -11,6 +11,9 @@ async def test_index_returns_portfolio_shell() -> None:
 
     assert "ac-pulse" in html
     assert "/portfolio?rep_name=" in html
+    assert "/actions/plan" in html
+    assert "Action Plan" in html
+    assert "Preview Actions" in html
     assert "Kevin Oostema" in html
 
 
