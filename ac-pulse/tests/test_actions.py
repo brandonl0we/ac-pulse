@@ -1,6 +1,9 @@
 from typing import Any
 
-from app.actions import build_action_plan
+import pytest
+
+from app.ac_client.account_resolver import AccountResolver
+from app.actions import build_action_plan, commit_action_plan
 
 
 def test_build_action_plan_creates_priority_task() -> None:
@@ -79,6 +82,124 @@ def test_build_action_plan_filters_accounts_and_limits_actions() -> None:
     assert plan["actions"][0]["action_type"] == "task"
 
 
+def test_build_action_plan_resolves_activecampaign_account_id(tmp_path: Any) -> None:
+    csv_path = tmp_path / "account-map.csv"
+    csv_path.write_text(
+        "snowflake_account_id,ac_account_id\n42,9001\n",
+        encoding="utf-8",
+    )
+    portfolio = _portfolio(
+        [
+            _account(
+                account_id=42,
+                action="Schedule churn-risk outreach",
+                health_status="Critical",
+            )
+        ]
+    )
+
+    plan = build_action_plan(
+        portfolio=portfolio,
+        resolver=AccountResolver(csv_path),
+    )
+
+    assert plan["actions"][0]["activecampaign_account_id"] == 9001
+    assert plan["actions"][0]["target_resolution"] == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_commit_action_plan_requires_confirmation() -> None:
+    api = FakeActiveCampaignAPI()
+    plan = {
+        "actions": [
+            {
+                "dedupe_key": "cs:task:42:schedule-churn-risk-outreach",
+                "action_type": "task",
+                "snowflake_account_id": 42,
+                "activecampaign_account_id": 9001,
+                "title": "Schedule churn-risk outreach",
+                "priority": "high",
+                "due_in_days": 1,
+                "body": "Churn risk is Very High.",
+            }
+        ]
+    }
+
+    result = await commit_action_plan(
+        plan=plan,
+        activecampaign_api=api,
+        dedupe_keys=["cs:task:42:schedule-churn-risk-outreach"],
+        confirm=False,
+    )
+
+    assert result["status"] == "requires_confirmation"
+    assert result["summary"]["committed"] == 0
+    assert api.notes == []
+
+
+@pytest.mark.asyncio
+async def test_commit_action_plan_writes_selected_account_note() -> None:
+    api = FakeActiveCampaignAPI()
+    plan = {
+        "actions": [
+            {
+                "dedupe_key": "cs:task:42:schedule-churn-risk-outreach",
+                "action_type": "task",
+                "snowflake_account_id": 42,
+                "activecampaign_account_id": 9001,
+                "title": "Schedule churn-risk outreach",
+                "priority": "high",
+                "due_in_days": 1,
+                "body": "Churn risk is Very High.",
+            }
+        ]
+    }
+
+    result = await commit_action_plan(
+        plan=plan,
+        activecampaign_api=api,
+        dedupe_keys=["cs:task:42:schedule-churn-risk-outreach"],
+        confirm=True,
+    )
+
+    assert result["status"] == "committed"
+    assert result["summary"]["committed"] == 1
+    assert api.notes[0]["account_id"] == 9001
+    assert "Dedupe-Key: cs:task:42:schedule-churn-risk-outreach" in api.notes[0]["note"]
+    assert result["committed"][0]["write_target"] == "account_note"
+
+
+@pytest.mark.asyncio
+async def test_commit_action_plan_skips_unmapped_account() -> None:
+    api = FakeActiveCampaignAPI()
+    plan = {
+        "actions": [
+            {
+                "dedupe_key": "cs:task:42:schedule-churn-risk-outreach",
+                "action_type": "task",
+                "snowflake_account_id": 42,
+                "activecampaign_account_id": None,
+                "title": "Schedule churn-risk outreach",
+                "priority": "high",
+                "due_in_days": 1,
+                "body": "Churn risk is Very High.",
+            }
+        ]
+    }
+
+    result = await commit_action_plan(
+        plan=plan,
+        activecampaign_api=api,
+        dedupe_keys=["cs:task:42:schedule-churn-risk-outreach"],
+        confirm=True,
+    )
+
+    assert result["summary"]["committed"] == 0
+    assert result["summary"]["skipped"] == 1
+    assert result["skipped"][0]["reason"] == "missing_activecampaign_account_id"
+    assert api.notes == []
+
+
 def _portfolio(accounts: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "success_rep_name": "Kevin Oostema",
@@ -109,3 +230,17 @@ def _account(
             "owner_attention": True,
         },
     }
+
+
+class FakeActiveCampaignAPI:
+    def __init__(self) -> None:
+        self.notes: list[dict[str, Any]] = []
+
+    async def create_account_note(
+        self,
+        *,
+        account_id: int,
+        note: str,
+    ) -> dict[str, Any]:
+        self.notes.append({"account_id": account_id, "note": note})
+        return {"note": {"id": f"note-{len(self.notes)}"}}

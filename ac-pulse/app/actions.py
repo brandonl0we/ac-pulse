@@ -1,6 +1,9 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from app.ac_client.account_resolver import AccountResolver
+from app.ac_client.api import ActiveCampaignAPI
+
 _NOOP_ACTIONS = {"Maintain normal cadence"}
 
 _ACTION_RULES = {
@@ -56,6 +59,7 @@ def build_action_plan(
     portfolio: dict[str, Any],
     account_ids: list[int] | None = None,
     limit: int = 25,
+    resolver: AccountResolver | None = None,
 ) -> dict[str, Any]:
     selected_ids = set(account_ids or [])
     planned_actions: list[dict[str, Any]] = []
@@ -76,9 +80,9 @@ def build_action_plan(
             skipped.append(_skip(account, "unsupported_action"))
             continue
 
-        planned_actions.append(_planned_task(account, rule))
+        planned_actions.append(_planned_task(account, rule, resolver))
         if rule.get("include_note"):
-            planned_actions.append(_planned_note(account, action_label))
+            planned_actions.append(_planned_note(account, action_label, resolver))
 
         if len(planned_actions) >= limit:
             planned_actions = planned_actions[:limit]
@@ -102,10 +106,74 @@ def build_action_plan(
     }
 
 
-def _planned_task(account: dict[str, Any], rule: dict[str, Any]) -> dict[str, Any]:
+async def commit_action_plan(
+    *,
+    plan: dict[str, Any],
+    activecampaign_api: ActiveCampaignAPI,
+    dedupe_keys: list[str],
+    confirm: bool,
+) -> dict[str, Any]:
+    selected_keys = set(dedupe_keys)
+    actions = [
+        action for action in plan.get("actions", []) if action.get("dedupe_key") in selected_keys
+    ]
+    missing_keys = sorted(selected_keys - {str(action.get("dedupe_key")) for action in actions})
+
+    if not confirm:
+        return _commit_response(
+            status="requires_confirmation",
+            actions=actions,
+            committed=[],
+            skipped=[],
+            missing_keys=missing_keys,
+        )
+
+    committed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for action in actions:
+        ac_account_id = action.get("activecampaign_account_id")
+        if not ac_account_id:
+            skipped.append(_commit_skip(action, "missing_activecampaign_account_id"))
+            continue
+
+        note = _commit_note_body(action)
+        response = await activecampaign_api.create_account_note(
+            account_id=int(ac_account_id),
+            note=note,
+        )
+        committed.append(
+            {
+                "dedupe_key": action["dedupe_key"],
+                "action_type": action["action_type"],
+                "snowflake_account_id": action["snowflake_account_id"],
+                "activecampaign_account_id": int(ac_account_id),
+                "write_target": "account_note",
+                "activecampaign_response": response,
+            }
+        )
+
+    return _commit_response(
+        status="committed",
+        actions=actions,
+        committed=committed,
+        skipped=skipped,
+        missing_keys=missing_keys,
+    )
+
+
+def _planned_task(
+    account: dict[str, Any],
+    rule: dict[str, Any],
+    resolver: AccountResolver | None,
+) -> dict[str, Any]:
     action_label = str(account["command"]["next_best_action"])
     body = _action_body(account)
-    return _base_action(account, action_type="task", action_label=action_label) | {
+    return _base_action(
+        account,
+        action_type="task",
+        action_label=action_label,
+        resolver=resolver,
+    ) | {
         "priority": rule["priority"],
         "title": rule["title"],
         "body": body,
@@ -113,9 +181,18 @@ def _planned_task(account: dict[str, Any], rule: dict[str, Any]) -> dict[str, An
     }
 
 
-def _planned_note(account: dict[str, Any], action_label: str) -> dict[str, Any]:
+def _planned_note(
+    account: dict[str, Any],
+    action_label: str,
+    resolver: AccountResolver | None,
+) -> dict[str, Any]:
     title = f"CS context: {action_label}"
-    return _base_action(account, action_type="note", action_label=action_label) | {
+    return _base_action(
+        account,
+        action_type="note",
+        action_label=action_label,
+        resolver=resolver,
+    ) | {
         "priority": "normal",
         "title": title,
         "body": _action_body(account),
@@ -128,16 +205,21 @@ def _base_action(
     *,
     action_type: str,
     action_label: str,
+    resolver: AccountResolver | None,
 ) -> dict[str, Any]:
     snowflake_account_id = int(account["account_id"])
+    activecampaign_account_id, target_resolution = _resolve_account_id(
+        resolver=resolver,
+        snowflake_account_id=snowflake_account_id,
+    )
     slug = _slug(action_label)
     return {
         "dedupe_key": f"cs:{action_type}:{snowflake_account_id}:{slug}",
         "action_type": action_type,
         "status": "planned",
         "snowflake_account_id": snowflake_account_id,
-        "activecampaign_account_id": None,
-        "target_resolution": "pending",
+        "activecampaign_account_id": activecampaign_account_id,
+        "target_resolution": target_resolution,
         "account_name": account.get("account_name"),
         "owner": {"success_rep_name": account.get("success_rep_name")},
         "source_command": account.get("command", {}),
@@ -175,6 +257,70 @@ def _skip(account: dict[str, Any], reason: str) -> dict[str, Any]:
 
 def _count_actions(actions: list[dict[str, Any]], action_type: str) -> int:
     return sum(1 for action in actions if action["action_type"] == action_type)
+
+
+def _resolve_account_id(
+    *,
+    resolver: AccountResolver | None,
+    snowflake_account_id: int,
+) -> tuple[int | None, str]:
+    if resolver is None:
+        return None, "pending"
+    try:
+        return resolver.resolve(snowflake_account_id), "resolved"
+    except KeyError:
+        return None, "missing_mapping"
+
+
+def _commit_response(
+    *,
+    status: str,
+    actions: list[dict[str, Any]],
+    committed: list[dict[str, Any]],
+    skipped: list[dict[str, Any]],
+    missing_keys: list[str],
+) -> dict[str, Any]:
+    return {
+        "mode": "account_notes_only",
+        "status": status,
+        "generated_at": datetime.now(UTC).isoformat(),
+        "summary": {
+            "requested": len(actions) + len(missing_keys),
+            "selected": len(actions),
+            "committed": len(committed),
+            "skipped": len(skipped),
+            "missing_dedupe_keys": len(missing_keys),
+        },
+        "committed": committed,
+        "skipped": skipped,
+        "missing_dedupe_keys": missing_keys,
+    }
+
+
+def _commit_skip(action: dict[str, Any], reason: str) -> dict[str, Any]:
+    return {
+        "dedupe_key": action.get("dedupe_key"),
+        "action_type": action.get("action_type"),
+        "snowflake_account_id": action.get("snowflake_account_id"),
+        "activecampaign_account_id": action.get("activecampaign_account_id"),
+        "reason": reason,
+    }
+
+
+def _commit_note_body(action: dict[str, Any]) -> str:
+    due = action.get("due_in_days")
+    due_line = "Due: none" if due is None else f"Due: in {due} days"
+    return "\n".join(
+        [
+            f"[ac-pulse] {action['title']}",
+            f"Dedupe-Key: {action['dedupe_key']}",
+            f"Type: {action['action_type']}",
+            f"Priority: {action.get('priority', 'normal')}",
+            due_line,
+            "",
+            str(action.get("body") or ""),
+        ]
+    )
 
 
 def _slug(value: str) -> str:

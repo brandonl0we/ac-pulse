@@ -12,8 +12,10 @@ async def test_index_returns_portfolio_shell() -> None:
     assert "ac-pulse" in html
     assert "/portfolio?rep_name=" in html
     assert "/actions/plan" in html
+    assert "/actions/commit" in html
     assert "Action Plan" in html
     assert "Preview Actions" in html
+    assert "Commit Notes" in html
     assert r"\\\"" not in html
     assert "class='selected'" in html
     assert "Kevin Oostema" in html
@@ -175,6 +177,73 @@ async def test_plan_actions_builds_dry_run_from_portfolio(
 
     assert result["mode"] == "dry_run"
     assert result["actions"][0]["snowflake_account_id"] == 42
+
+
+@pytest.mark.asyncio
+async def test_commit_actions_builds_plan_and_commits_selected_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeActiveCampaignAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeActiveCampaignAPI":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["snowflake_client"], FakeSnowflakeClient)
+        assert kwargs["rep_name"] == "Kevin Oostema"
+        return {
+            "success_rep_name": "Kevin Oostema",
+            "summary": {"account_count": 1},
+            "accounts": [{"account_id": 42}],
+        }
+
+    def fake_build_action_plan(**kwargs: Any) -> dict[str, Any]:
+        assert kwargs["portfolio"]["success_rep_name"] == "Kevin Oostema"
+        assert kwargs["account_ids"] == [42]
+        assert kwargs["limit"] == 10
+        assert kwargs["resolver"] == "resolver"
+        return {"actions": [{"dedupe_key": "cs:task:42:x"}]}
+
+    async def fake_commit_action_plan(**kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["activecampaign_api"], FakeActiveCampaignAPI)
+        assert kwargs["dedupe_keys"] == ["cs:task:42:x"]
+        assert kwargs["confirm"] is True
+        return {"status": "committed", "summary": {"committed": 1}}
+
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+    monkeypatch.setattr(main, "build_action_plan", fake_build_action_plan)
+    monkeypatch.setattr(main, "commit_action_plan", fake_commit_action_plan)
+    monkeypatch.setattr(main, "build_account_resolver", lambda path: "resolver")
+
+    result = await main.commit_actions(
+        main.ActionCommitRequest(
+            rep_name="Kevin Oostema",
+            account_ids=[42],
+            dedupe_keys=["cs:task:42:x"],
+            limit=10,
+            confirm=True,
+        )
+    )
+
+    assert result["status"] == "committed"
+    assert result["summary"]["committed"] == 1
 
 
 @pytest.mark.asyncio

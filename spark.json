@@ -33,6 +33,10 @@
     {
       "path": "/actions/plan",
       "description": "Dry-run customer success action planner. POST rep_name, optional account_ids, and limit. Returns deterministic planned tasks/notes without writing to ActiveCampaign."
+    },
+    {
+      "path": "/actions/commit",
+      "description": "Guarded customer success action writer. POST rep_name, selected dedupe_keys, optional account_ids, and confirm:true. Writes reviewed actions as ActiveCampaign account notes only."
     }
   ]
 }

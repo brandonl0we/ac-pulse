@@ -111,6 +111,16 @@ class ActiveCampaignAPI:
         response = await self._request("POST", "/accountCustomFieldMeta", json=payload)
         return cast(dict[str, Any], response.json())
 
+    async def create_account_note(
+        self,
+        *,
+        account_id: int,
+        note: str,
+    ) -> dict[str, Any]:
+        payload = {"note": {"note": note}}
+        response = await self._request("POST", f"/accounts/{account_id}/notes", json=payload)
+        return cast(dict[str, Any], response.json())
+
     async def _request(
         self,
         method: str,

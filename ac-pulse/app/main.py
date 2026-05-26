@@ -11,7 +11,7 @@ from redis.asyncio import Redis
 
 from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
-from app.actions import build_action_plan
+from app.actions import build_action_plan, commit_action_plan
 from app.audit import configure_audit, get_last_success_by_worker, get_recent_audit_rows
 from app.config import get_settings
 from app.extractors.acai import ACAIExtractor
@@ -136,6 +136,7 @@ INDEX_HTML = """
         </div>
         <div class="panel-actions">
           <button id="planActions">Preview Actions</button>
+          <button id="commitActions" disabled>Commit Notes</button>
           <button class="secondary" id="clearSelection">Clear</button>
         </div>
         <div id="planStatus" class="panel-status">Select accounts to preview tasks and notes.</div>
@@ -154,6 +155,7 @@ INDEX_HTML = """
     const actionListEl = document.getElementById("actionList");
     const selectedAccountIds = new Set();
     let portfolioData = null;
+    let currentPlan = null;
 
     const money = value => new Intl.NumberFormat("en-US", {
       style: "currency", currency: "USD", maximumFractionDigits: 0
@@ -170,6 +172,7 @@ INDEX_HTML = """
       rowsEl.innerHTML = "";
       actionListEl.innerHTML = "";
       actionSummaryEl.textContent = "No plan loaded";
+      currentPlan = null;
       selectedAccountIds.clear();
       updateSelectionStatus();
       const response = await fetch(`/portfolio?rep_name=${encodeURIComponent(rep)}`);
@@ -256,6 +259,7 @@ INDEX_HTML = """
         throw new Error(text.slice(0, 500));
       }
       const plan = await response.json();
+      currentPlan = plan;
       actionSummaryEl.textContent = `${plan.summary.planned_actions} actions`;
       planStatusEl.textContent = `${plan.summary.tasks} tasks, ${plan.summary.notes} notes, ${plan.summary.skipped} skipped.`;
       actionListEl.innerHTML = plan.actions.map(action => {
@@ -270,17 +274,49 @@ INDEX_HTML = """
           <div class="action-body">${action.body}</div>
         </article>`;
       }).join("") || "<div class='panel-status'>No actions planned for the selected accounts.</div>";
+      updateSelectionStatus();
+    }
+
+    async function commitActions() {
+      if (!currentPlan || currentPlan.actions.length === 0) {
+        planStatusEl.textContent = "Preview actions before committing.";
+        return;
+      }
+      const confirmed = window.confirm("Write the reviewed actions as ActiveCampaign account notes?");
+      if (!confirmed) return;
+      planStatusEl.textContent = "Writing reviewed actions to ActiveCampaign...";
+      const response = await fetch("/actions/commit", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          rep_name: repEl.value.trim() || "Kevin Oostema",
+          account_ids: Array.from(selectedAccountIds),
+          dedupe_keys: currentPlan.actions.map(action => action.dedupe_key),
+          limit: 25,
+          confirm: true
+        })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.slice(0, 500));
+      }
+      const result = await response.json();
+      planStatusEl.textContent = `${result.summary.committed} committed, ${result.summary.skipped} skipped.`;
+      actionSummaryEl.textContent = result.status;
     }
 
     function clearPlan() {
+      currentPlan = null;
       actionSummaryEl.textContent = "No plan loaded";
       planStatusEl.textContent = `${selectedAccountIds.size} accounts selected.`;
       actionListEl.innerHTML = "";
+      updateSelectionStatus();
     }
 
     function updateSelectionStatus() {
       selectionStatusEl.textContent = `${selectedAccountIds.size} accounts selected`;
       document.getElementById("planActions").disabled = selectedAccountIds.size === 0;
+      document.getElementById("commitActions").disabled = !currentPlan || currentPlan.actions.length === 0;
     }
 
     function clearSelection() {
@@ -296,6 +332,7 @@ INDEX_HTML = """
     });
     document.getElementById("clearSelection").addEventListener("click", clearSelection);
     document.getElementById("planActions").addEventListener("click", () => previewActions().catch(showError));
+    document.getElementById("commitActions").addEventListener("click", () => commitActions().catch(showError));
     document.getElementById("load").addEventListener("click", () => loadPortfolio().catch(showError));
 
     function showError(error) {
@@ -560,6 +597,14 @@ class ActionPlanRequest(BaseModel):
     limit: int = Field(default=25, ge=1, le=100)
 
 
+class ActionCommitRequest(BaseModel):
+    rep_name: str = Field(default="Kevin Oostema", min_length=1)
+    account_ids: list[int] | None = None
+    dedupe_keys: list[str] = Field(default_factory=list, min_length=1)
+    limit: int = Field(default=25, ge=1, le=100)
+    confirm: bool = False
+
+
 @app.post("/actions/plan")
 async def plan_actions(body: ActionPlanRequest) -> dict[str, Any]:
     try:
@@ -578,7 +623,40 @@ async def plan_actions(body: ActionPlanRequest) -> dict[str, Any]:
         portfolio=portfolio,
         account_ids=body.account_ids,
         limit=body.limit,
+        resolver=build_account_resolver(settings.account_id_map_path),
     )
+
+
+@app.post("/actions/commit")
+async def commit_actions(body: ActionCommitRequest) -> dict[str, Any]:
+    try:
+        portfolio = await build_success_rep_portfolio(
+            snowflake_client=SnowflakeClient(settings),
+            rep_name=body.rep_name,
+        )
+    except Exception as exc:
+        logger.exception("action_commit_portfolio_failed", rep_name=body.rep_name)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to build action commit set: {str(exc)[:1000]}",
+        ) from exc
+
+    plan = build_action_plan(
+        portfolio=portfolio,
+        account_ids=body.account_ids,
+        limit=body.limit,
+        resolver=build_account_resolver(settings.account_id_map_path),
+    )
+    async with ActiveCampaignAPI(
+        base_url=settings.ac_api_url,
+        api_key=settings.ac_api_key,
+    ) as api:
+        return await commit_action_plan(
+            plan=plan,
+            activecampaign_api=api,
+            dedupe_keys=body.dedupe_keys,
+            confirm=body.confirm,
+        )
 
 
 @app.post("/lookup/customer-by-email")
