@@ -14,6 +14,8 @@ async def test_index_returns_portfolio_shell() -> None:
     assert "/actions/plan" in html
     assert "Action Plan" in html
     assert "Preview Actions" in html
+    assert r"\\\"" not in html
+    assert "class='selected'" in html
     assert "Kevin Oostema" in html
 
 
