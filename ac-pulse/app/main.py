@@ -46,28 +46,51 @@ INDEX_HTML = """
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>ac-pulse</title>
   <style>
-    :root { color-scheme: light; --ink:#1f2933; --muted:#667085; --line:#d9e2ec; --bg:#f7f9fc; --panel:#fff; --accent:#0f766e; --risk:#b42318; }
+    :root { color-scheme: light; --ink:#1f2933; --muted:#667085; --line:#d9e2ec; --bg:#f7f9fc; --panel:#fff; --accent:#0f766e; --risk:#b42318; --warn:#b54708; }
     * { box-sizing: border-box; }
     body { margin:0; background:var(--bg); color:var(--ink); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     header { padding:24px 28px 14px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:2; }
     h1 { margin:0; font-size:24px; letter-spacing:0; }
     .bar { display:flex; gap:12px; align-items:center; margin-top:16px; flex-wrap:wrap; }
-    input { width:min(360px, 100%); padding:10px 12px; border:1px solid #b8c4d4; border-radius:6px; font-size:14px; }
+    input[type="text"] { width:min(360px, 100%); padding:10px 12px; border:1px solid #b8c4d4; border-radius:6px; font-size:14px; }
+    input[type="checkbox"] { width:18px; height:18px; margin:0; accent-color:var(--accent); }
     button { border:0; border-radius:6px; background:var(--accent); color:white; padding:10px 14px; font-weight:700; cursor:pointer; }
+    button.secondary { background:#334e68; }
+    button:disabled { opacity:.55; cursor:not-allowed; }
     main { padding:24px 28px 40px; max-width:1400px; margin:0 auto; }
     .status { color:var(--muted); font-size:14px; margin-bottom:18px; }
     .kpis { display:grid; grid-template-columns: repeat(5, minmax(160px, 1fr)); gap:12px; margin-bottom:22px; }
     .kpi { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
     .label { color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:800; letter-spacing:.04em; }
     .value { font-size:24px; font-weight:800; margin-top:6px; }
+    .workbench { display:grid; grid-template-columns:minmax(0, 1fr) 420px; gap:18px; align-items:start; }
+    .table-wrap { min-width:0; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px; flex-wrap:wrap; }
+    .small { color:var(--muted); font-size:13px; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; position:sticky; top:118px; }
+    .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+    .panel h2 { margin:0; font-size:18px; letter-spacing:0; }
+    .dry { color:var(--warn); font-weight:800; font-size:12px; text-transform:uppercase; letter-spacing:.04em; margin-top:4px; }
+    .panel-actions { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0 14px; }
+    .panel-status { color:var(--muted); font-size:13px; line-height:1.4; min-height:20px; }
+    .action-list { display:grid; gap:10px; margin-top:12px; }
+    .action-item { border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfdff; }
+    .action-title { display:flex; justify-content:space-between; gap:8px; font-weight:800; font-size:14px; }
+    .action-meta { color:var(--muted); font-size:12px; margin-top:4px; }
+    .action-body { color:#334e68; font-size:13px; line-height:1.4; margin-top:8px; }
     table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:13px; vertical-align:top; }
     th { background:#eef3f8; color:#334e68; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
     tr:last-child td { border-bottom:0; }
+    tr.selected { background:#f0fdfa; }
+    th.select, td.select { width:42px; text-align:center; }
     .num { text-align:right; white-space:nowrap; }
     .pill { display:inline-block; padding:3px 8px; border-radius:999px; background:#e6fffb; color:#0f766e; font-weight:700; }
     .pill.risk { background:#fee4e2; color:var(--risk); }
+    .pill.note { background:#eef4ff; color:#1849a9; }
+    .pill.task { background:#ecfdf3; color:#067647; }
     .reason { color:var(--muted); max-width:520px; }
+    @media (max-width: 1100px) { .workbench { grid-template-columns:1fr; } .panel { position:static; } }
     @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } table { display:block; overflow-x:auto; } }
   </style>
 </head>
@@ -75,32 +98,62 @@ INDEX_HTML = """
   <header>
     <h1>ac-pulse</h1>
     <div class="bar">
-      <input id="rep" value="Kevin Oostema" aria-label="Success rep name" />
+      <input id="rep" type="text" value="Kevin Oostema" aria-label="Success rep name" />
       <button id="load">Load Portfolio</button>
     </div>
   </header>
   <main>
     <div id="status" class="status">Loading portfolio...</div>
     <section id="kpis" class="kpis"></section>
-    <table>
-      <thead>
-        <tr>
-          <th>Account</th>
-          <th class="num">ARR</th>
-          <th>Health</th>
-          <th>Action</th>
-          <th>Reason</th>
-          <th class="num">Last TP</th>
-        </tr>
-      </thead>
-      <tbody id="rows"></tbody>
-    </table>
+    <section class="workbench">
+      <div class="table-wrap">
+        <div class="toolbar">
+          <div class="small" id="selectionStatus">0 accounts selected</div>
+          <button class="secondary" id="selectAttention">Select Top Attention</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th class="select"></th>
+              <th>Account</th>
+              <th class="num">ARR</th>
+              <th>Health</th>
+              <th>Action</th>
+              <th>Reason</th>
+              <th class="num">Last TP</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <aside class="panel" aria-label="Action plan preview">
+        <div class="panel-head">
+          <div>
+            <h2>Action Plan</h2>
+            <div class="dry">Dry Run</div>
+          </div>
+          <div class="small" id="actionSummary">No plan loaded</div>
+        </div>
+        <div class="panel-actions">
+          <button id="planActions">Preview Actions</button>
+          <button class="secondary" id="clearSelection">Clear</button>
+        </div>
+        <div id="planStatus" class="panel-status">Select accounts to preview tasks and notes.</div>
+        <div id="actionList" class="action-list"></div>
+      </aside>
+    </section>
   </main>
   <script>
     const statusEl = document.getElementById("status");
     const kpisEl = document.getElementById("kpis");
     const rowsEl = document.getElementById("rows");
     const repEl = document.getElementById("rep");
+    const selectionStatusEl = document.getElementById("selectionStatus");
+    const actionSummaryEl = document.getElementById("actionSummary");
+    const planStatusEl = document.getElementById("planStatus");
+    const actionListEl = document.getElementById("actionList");
+    const selectedAccountIds = new Set();
+    let portfolioData = null;
 
     const money = value => new Intl.NumberFormat("en-US", {
       style: "currency", currency: "USD", maximumFractionDigits: 0
@@ -115,12 +168,17 @@ INDEX_HTML = """
       statusEl.textContent = `Loading ${rep}...`;
       kpisEl.innerHTML = "";
       rowsEl.innerHTML = "";
+      actionListEl.innerHTML = "";
+      actionSummaryEl.textContent = "No plan loaded";
+      selectedAccountIds.clear();
+      updateSelectionStatus();
       const response = await fetch(`/portfolio?rep_name=${encodeURIComponent(rep)}`);
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text.slice(0, 500));
       }
       const data = await response.json();
+      portfolioData = data;
       const summary = data.summary;
       statusEl.textContent = `${data.success_rep_name} portfolio generated at ${new Date(data.generated_at).toLocaleString()}`;
       kpisEl.innerHTML = [
@@ -130,11 +188,20 @@ INDEX_HTML = """
         kpi("High Churn ARR", money(summary.high_or_very_high_churn_arr)),
         kpi("Detractor ARR", money(summary.nps_detractor_arr))
       ].join("");
-      rowsEl.innerHTML = data.accounts.slice(0, 50).map(account => {
+      selectTopAttention();
+      renderRows(data.accounts.slice(0, 50));
+      planStatusEl.textContent = "Top attention accounts are selected.";
+    }
+
+    function renderRows(accounts) {
+      rowsEl.innerHTML = accounts.map(account => {
         const command = account.command;
         const riskClass = ["Critical", "At Risk"].includes(command.health_status) ? " risk" : "";
         const days = account.touchpoints.days_since_last_touchpoint;
-        return `<tr>
+        const checked = selectedAccountIds.has(account.account_id) ? " checked" : "";
+        const selected = selectedAccountIds.has(account.account_id) ? " class=\"selected\"" : "";
+        return `<tr${selected}>
+          <td class="select"><input type="checkbox" data-account-id="${account.account_id}"${checked} aria-label="Select ${account.account_name || account.account_id}" /></td>
           <td><strong>${account.account_name || account.account_id}</strong><br><span class="status">${account.plan_tier_name || ""}</span></td>
           <td class="num">${money(account.arr)}</td>
           <td><span class="pill${riskClass}">${command.health_status}</span></td>
@@ -143,12 +210,99 @@ INDEX_HTML = """
           <td class="num">${days == null ? "None" : `${days}d`}</td>
         </tr>`;
       }).join("");
+      rowsEl.querySelectorAll("input[type=checkbox]").forEach(input => {
+        input.addEventListener("change", event => {
+          const accountId = Number(event.target.dataset.accountId);
+          if (event.target.checked) {
+            selectedAccountIds.add(accountId);
+          } else {
+            selectedAccountIds.delete(accountId);
+          }
+          renderRows(portfolioData.accounts.slice(0, 50));
+          clearPlan();
+        });
+      });
+      updateSelectionStatus();
     }
 
+    function selectTopAttention() {
+      selectedAccountIds.clear();
+      if (!portfolioData) return;
+      portfolioData.accounts
+        .filter(account => account.command.owner_attention)
+        .slice(0, 5)
+        .forEach(account => selectedAccountIds.add(account.account_id));
+      updateSelectionStatus();
+    }
+
+    async function previewActions() {
+      if (!portfolioData || selectedAccountIds.size === 0) {
+        planStatusEl.textContent = "Select at least one account.";
+        return;
+      }
+      planStatusEl.textContent = "Building dry-run action plan...";
+      actionListEl.innerHTML = "";
+      const response = await fetch("/actions/plan", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          rep_name: repEl.value.trim() || "Kevin Oostema",
+          account_ids: Array.from(selectedAccountIds),
+          limit: 25
+        })
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.slice(0, 500));
+      }
+      const plan = await response.json();
+      actionSummaryEl.textContent = `${plan.summary.planned_actions} actions`;
+      planStatusEl.textContent = `${plan.summary.tasks} tasks, ${plan.summary.notes} notes, ${plan.summary.skipped} skipped.`;
+      actionListEl.innerHTML = plan.actions.map(action => {
+        const typeClass = action.action_type === "note" ? " note" : " task";
+        const due = action.due_in_days == null ? "No due date" : `Due in ${action.due_in_days}d`;
+        return `<article class="action-item">
+          <div class="action-title">
+            <span>${action.title}</span>
+            <span class="pill${typeClass}">${action.action_type}</span>
+          </div>
+          <div class="action-meta">${action.account_name || action.snowflake_account_id} - ${action.priority} - ${due}</div>
+          <div class="action-body">${action.body}</div>
+        </article>`;
+      }).join("") || "<div class=\"panel-status\">No actions planned for the selected accounts.</div>";
+    }
+
+    function clearPlan() {
+      actionSummaryEl.textContent = "No plan loaded";
+      planStatusEl.textContent = `${selectedAccountIds.size} accounts selected.`;
+      actionListEl.innerHTML = "";
+    }
+
+    function updateSelectionStatus() {
+      selectionStatusEl.textContent = `${selectedAccountIds.size} accounts selected`;
+      document.getElementById("planActions").disabled = selectedAccountIds.size === 0;
+    }
+
+    function clearSelection() {
+      selectedAccountIds.clear();
+      if (portfolioData) renderRows(portfolioData.accounts.slice(0, 50));
+      clearPlan();
+    }
+
+    document.getElementById("selectAttention").addEventListener("click", () => {
+      selectTopAttention();
+      if (portfolioData) renderRows(portfolioData.accounts.slice(0, 50));
+      clearPlan();
+    });
+    document.getElementById("clearSelection").addEventListener("click", clearSelection);
+    document.getElementById("planActions").addEventListener("click", () => previewActions().catch(showError));
     document.getElementById("load").addEventListener("click", () => loadPortfolio().catch(showError));
+
     function showError(error) {
       statusEl.textContent = `Unable to load portfolio: ${error.message}`;
+      planStatusEl.textContent = error.message;
     }
+
     loadPortfolio().catch(showError);
   </script>
 </body>
