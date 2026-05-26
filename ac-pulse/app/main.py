@@ -199,7 +199,7 @@ INDEX_HTML = """
         const riskClass = ["Critical", "At Risk"].includes(command.health_status) ? " risk" : "";
         const days = account.touchpoints.days_since_last_touchpoint;
         const checked = selectedAccountIds.has(account.account_id) ? " checked" : "";
-        const selected = selectedAccountIds.has(account.account_id) ? " class=\"selected\"" : "";
+        const selected = selectedAccountIds.has(account.account_id) ? " class='selected'" : "";
         return `<tr${selected}>
           <td class="select"><input type="checkbox" data-account-id="${account.account_id}"${checked} aria-label="Select ${account.account_name || account.account_id}" /></td>
           <td><strong>${account.account_name || account.account_id}</strong><br><span class="status">${account.plan_tier_name || ""}</span></td>
@@ -269,7 +269,7 @@ INDEX_HTML = """
           <div class="action-meta">${action.account_name || action.snowflake_account_id} - ${action.priority} - ${due}</div>
           <div class="action-body">${action.body}</div>
         </article>`;
-      }).join("") || "<div class=\"panel-status\">No actions planned for the selected accounts.</div>";
+      }).join("") || "<div class='panel-status'>No actions planned for the selected accounts.</div>";
     }
 
     function clearPlan() {
