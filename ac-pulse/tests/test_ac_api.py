@@ -3,7 +3,12 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.ac_client.api import ActiveCampaignAPI
+from app.ac_client.api import ActiveCampaignAPI, _normalize_base_url
+
+
+def test_ac_api_normalizes_root_base_url_to_api_v3() -> None:
+    assert _normalize_base_url("https://example.test") == "https://example.test/api/3"
+    assert _normalize_base_url("https://example.test/api/3") == "https://example.test/api/3"
 
 
 @pytest.mark.asyncio
@@ -82,7 +87,7 @@ async def test_create_account_note_posts_to_account_notes() -> None:
     assert payload == {"note": {"id": "note-1"}}
     request_mock.assert_called_once()
     assert request_mock.call_args.kwargs["method"] == "POST"
-    assert request_mock.call_args.kwargs["url"] == "/accounts/123/notes"
+    assert request_mock.call_args.kwargs["url"] == "accounts/123/notes"
     assert request_mock.call_args.kwargs["json"] == {
         "note": {"note": "Follow up note"}
     }
@@ -118,3 +123,5 @@ async def test_list_all_accounts_pages_until_short_page() -> None:
     assert request_mock.call_count == 2
     assert request_mock.call_args_list[0].kwargs["params"] == {"limit": 2, "offset": 0}
     assert request_mock.call_args_list[1].kwargs["params"] == {"limit": 2, "offset": 2}
+    assert request_mock.call_args_list[0].kwargs["url"] == "accounts"
+    assert request_mock.call_args_list[0].kwargs["headers"] == {"Api-Token": "key"}

@@ -45,7 +45,7 @@ class ActiveCampaignAPI:
         api_key: str,
         client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._base_url = base_url.rstrip("/")
+        self._base_url = _normalize_base_url(base_url)
         self._api_key = api_key
         self._client = client or httpx.AsyncClient(base_url=self._base_url, timeout=30.0)
         self._owns_client = client is None
@@ -162,7 +162,7 @@ class ActiveCampaignAPI:
             try:
                 response = await self._client.request(
                     method=method,
-                    url=path,
+                    url=path.lstrip("/"),
                     json=json,
                     params=params,
                     headers={"Api-Token": self._api_key},
@@ -198,3 +198,10 @@ def _backoff_with_jitter(attempt: int) -> float:
     base_delay = min(16.0, 0.5 * (2**attempt))
     jitter = float(random.uniform(0.0, base_delay / 2))
     return float(base_delay + jitter)
+
+
+def _normalize_base_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/api/3"):
+        return normalized
+    return f"{normalized}/api/3"
