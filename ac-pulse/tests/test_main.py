@@ -8,8 +8,10 @@ async def test_index_returns_portfolio_shell() -> None:
     from app import main
 
     html = await main.index()
+    app_html = await main.app_index()
 
     assert "ac-pulse" in html
+    assert app_html == html
     assert "/portfolio?rep_name=" in html
     assert "/actions/plan" in html
     assert "/actions/commit" in html

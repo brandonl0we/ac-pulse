@@ -507,6 +507,11 @@ async def index() -> str:
     return INDEX_HTML
 
 
+@app.get("/app", response_class=HTMLResponse)
+async def app_index() -> str:
+    return INDEX_HTML
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, object]:
     """Liveness probe — does NOT call any external service.

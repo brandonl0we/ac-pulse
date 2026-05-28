@@ -19,6 +19,10 @@
       "description": "Primary ac-pulse web UI for the success-rep portfolio, action planner, and account mapping workflow."
     },
     {
+      "path": "/app",
+      "description": "Primary ac-pulse web UI for the success-rep portfolio, action planner, and account mapping workflow."
+    },
+    {
       "path": "/admin/smoke-snowflake",
       "description": "Snowflake JWT smoke test — gated by X-Service-Key. Bypasses CF Access so other agents (and curl) can hit it via hooks.ac-spark.com."
     },
