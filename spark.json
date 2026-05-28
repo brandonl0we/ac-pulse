@@ -15,10 +15,6 @@
   ],
   "webhooks": [
     {
-      "path": "/",
-      "description": "Primary ac-pulse web UI for the success-rep portfolio, action planner, and account mapping workflow."
-    },
-    {
       "path": "/app",
       "description": "Primary ac-pulse web UI for the success-rep portfolio, action planner, and account mapping workflow."
     },
