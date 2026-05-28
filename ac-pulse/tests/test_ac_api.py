@@ -54,6 +54,7 @@ async def test_ac_api_does_not_retry_on_non_429_4xx() -> None:
             await api.get_account(1)
 
     assert request_mock.call_count == 1
+    assert request_mock.call_args.kwargs["headers"] == {"Api-Token": "key"}
 
 
 @pytest.mark.asyncio

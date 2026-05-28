@@ -756,11 +756,18 @@ async def account_map_preview(
             detail=f"Unable to build account map preview: {str(exc)[:1000]}",
         ) from exc
 
-    async with ActiveCampaignAPI(
-        base_url=settings.ac_api_url,
-        api_key=settings.ac_api_key,
-    ) as api:
-        ac_accounts = await api.list_all_accounts()
+    try:
+        async with ActiveCampaignAPI(
+            base_url=settings.ac_api_url,
+            api_key=settings.ac_api_key,
+        ) as api:
+            ac_accounts = await api.list_all_accounts()
+    except Exception as exc:
+        logger.exception("account_map_preview_activecampaign_failed", rep_name=rep_name)
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to list ActiveCampaign accounts: {str(exc)[:1000]}",
+        ) from exc
 
     return build_account_map_preview(
         portfolio=portfolio,

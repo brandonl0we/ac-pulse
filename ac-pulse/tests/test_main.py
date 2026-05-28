@@ -242,6 +242,53 @@ async def test_account_map_preview_builds_read_only_mapping(
 
 
 @pytest.mark.asyncio
+async def test_account_map_preview_reports_activecampaign_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeActiveCampaignAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeActiveCampaignAPI":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def list_all_accounts(self) -> list[dict[str, Any]]:
+            raise RuntimeError("AC auth failed")
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        return {"success_rep_name": "Kevin Oostema", "accounts": []}
+
+    monkeypatch.setattr(main.settings, "service_api_key", "secret")
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await main.account_map_preview(
+            rep_name="Kevin Oostema",
+            x_service_key="secret",
+        )
+
+    assert exc_info.value.status_code == 502
+    assert "Unable to list ActiveCampaign accounts" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_commit_actions_builds_plan_and_commits_selected_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

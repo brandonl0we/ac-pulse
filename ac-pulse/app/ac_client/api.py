@@ -165,7 +165,7 @@ class ActiveCampaignAPI:
                     url=path,
                     json=json,
                     params=params,
-                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    headers={"Api-Token": self._api_key},
                 )
             except httpx.RequestError:
                 if attempt == retries:
