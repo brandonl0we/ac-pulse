@@ -66,6 +66,23 @@ def build_account_map_preview(
             "rep_name": portfolio.get("success_rep_name"),
             "snowflake_accounts": len(portfolio.get("accounts", [])),
             "activecampaign_accounts": len(activecampaign_accounts),
+            "activecampaign_indexed_accounts": len(
+                {
+                    int(candidate["ac_account_id"])
+                    for candidates in ac_index.values()
+                    for candidate in candidates
+                }
+            ),
+        },
+        "diagnostics": {
+            "activecampaign_sample": _activecampaign_sample(activecampaign_accounts),
+            "snowflake_sample": [
+                {
+                    **_snowflake_account(account),
+                    "match_keys": sorted(_snowflake_keys(account)),
+                }
+                for account in portfolio.get("accounts", [])[:10]
+            ],
         },
         "summary": {
             "matched": len(matched),
@@ -120,6 +137,19 @@ def _activecampaign_keys(account: dict[str, Any]) -> set[str]:
     return _identity_keys(account.get("name")) | _identity_keys(
         account.get("accountUrl") or account.get("account_url")
     )
+
+
+def _activecampaign_sample(accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "ac_account_id": _as_int(account.get("id")),
+            "ac_account_name": account.get("name"),
+            "ac_account_url": account.get("accountUrl") or account.get("account_url"),
+            "raw_keys": sorted(str(key) for key in account),
+            "match_keys": sorted(_activecampaign_keys(account)),
+        }
+        for account in accounts[:10]
+    ]
 
 
 def _identity_keys(value: Any) -> set[str]:

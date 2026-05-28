@@ -376,7 +376,8 @@ INDEX_HTML = """
       }
       accountMapPreview = await response.json();
       const summary = accountMapPreview.summary;
-      mapStatusEl.textContent = `${summary.matched} matched, ${summary.ambiguous} ambiguous, ${summary.unmatched} unmatched`;
+      const source = accountMapPreview.source || {};
+      mapStatusEl.textContent = `${summary.matched} matched, ${summary.ambiguous} ambiguous, ${summary.unmatched} unmatched - ${source.activecampaign_accounts || 0} AC accounts seen`;
       mapJsonEl.value = JSON.stringify(accountMapPreview.account_id_map || {}, null, 2);
       document.getElementById("copyMapJson").disabled = false;
       document.getElementById("copyMapCsv").disabled = false;
@@ -391,7 +392,17 @@ INDEX_HTML = """
       document.querySelectorAll(".map-tab").forEach(button => {
         button.classList.toggle("active", button.dataset.mapBucket === activeMapBucket);
       });
-      const rows = accountMapPreview[activeMapBucket] || [];
+      let rows = accountMapPreview[activeMapBucket] || [];
+      if (activeMapBucket === "matched" && rows.length === 0) {
+        rows = accountMapPreview.diagnostics?.activecampaign_sample || [];
+        if (rows.length > 0) {
+          mapListEl.innerHTML = rows.map(row => `<article class="map-row">
+            <strong>AC sample: ${escapeHtml(row.ac_account_name || row.ac_account_id || "Unnamed")}</strong>
+            <code>${escapeHtml((row.match_keys || row.raw_keys || []).join(" | "))}</code>
+          </article>`).join("");
+          return;
+        }
+      }
       mapListEl.innerHTML = rows.slice(0, 100).map(row => {
         if (activeMapBucket === "matched") {
           return `<article class="map-row">

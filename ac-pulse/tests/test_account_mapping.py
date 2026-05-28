@@ -27,6 +27,11 @@ def test_build_account_map_preview_matches_activehosted_domain() -> None:
     assert preview["matched"][0]["snowflake_account_id"] == 1043604
     assert preview["matched"][0]["ac_account_id"] == 9001
     assert preview["account_id_map"] == {"1043604": 9001}
+    assert preview["source"]["activecampaign_accounts"] == 1
+    assert preview["source"]["activecampaign_indexed_accounts"] == 1
+    assert "biofit.activehosted.com" in preview["diagnostics"][
+        "activecampaign_sample"
+    ][0]["match_keys"]
     assert "1043604,9001" in preview["csv"]
 
 

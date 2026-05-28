@@ -19,6 +19,8 @@ async def test_index_returns_portfolio_shell() -> None:
     assert "Preview Actions" in html
     assert "Commit Notes" in html
     assert "Account Mapping" in html
+    assert "AC accounts seen" in html
+    assert "AC sample" in html
     assert "/admin/account-map/preview" in html
     assert "ACCOUNT_ID_MAP_JSON" in html
     assert r"\\\"" not in html
