@@ -54,6 +54,10 @@ def build_account_map_preview(
             for row in sorted(matched, key=lambda item: item["snowflake_account_id"])
         ],
     ]
+    account_id_map = {
+        str(row["snowflake_account_id"]): row["ac_account_id"]
+        for row in sorted(matched, key=lambda item: item["snowflake_account_id"])
+    }
 
     return {
         "mode": "read_only",
@@ -71,6 +75,7 @@ def build_account_map_preview(
         "matched": matched,
         "ambiguous": ambiguous,
         "unmatched": unmatched,
+        "account_id_map": account_id_map,
         "csv": "\n".join(csv_rows) + "\n",
     }
 

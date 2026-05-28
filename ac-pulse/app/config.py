@@ -70,6 +70,7 @@ class Settings(BaseSettings):
     heartbeat_test_email: str | None = Field(default=None, alias="HEARTBEAT_TEST_EMAIL")
 
     account_id_map_path: Path = Field(alias="ACCOUNT_ID_MAP_PATH")
+    account_id_map_json: str | None = Field(default=None, alias="ACCOUNT_ID_MAP_JSON")
     git_sha: str | None = Field(default=None, alias="GIT_SHA")
 
 

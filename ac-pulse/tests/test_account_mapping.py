@@ -26,6 +26,7 @@ def test_build_account_map_preview_matches_activehosted_domain() -> None:
     assert preview["summary"] == {"matched": 1, "ambiguous": 0, "unmatched": 0}
     assert preview["matched"][0]["snowflake_account_id"] == 1043604
     assert preview["matched"][0]["ac_account_id"] == 9001
+    assert preview["account_id_map"] == {"1043604": 9001}
     assert "1043604,9001" in preview["csv"]
 
 

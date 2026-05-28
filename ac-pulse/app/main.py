@@ -79,6 +79,20 @@ INDEX_HTML = """
     .action-title { display:flex; justify-content:space-between; gap:8px; font-weight:800; font-size:14px; }
     .action-meta { color:var(--muted); font-size:12px; margin-top:4px; }
     .action-body { color:#334e68; font-size:13px; line-height:1.4; margin-top:8px; }
+    .admin { margin-top:22px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+    .admin-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+    .admin h2 { margin:0; font-size:18px; letter-spacing:0; }
+    .admin-grid { display:grid; grid-template-columns:minmax(0, 1fr) 360px; gap:14px; align-items:start; }
+    .admin-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    input[type="password"] { width:min(320px, 100%); padding:10px 12px; border:1px solid #b8c4d4; border-radius:6px; font-size:14px; }
+    textarea { width:100%; min-height:130px; border:1px solid #b8c4d4; border-radius:6px; padding:10px 12px; font:12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; resize:vertical; }
+    .map-tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+    .map-tab { background:#eef3f8; color:#334e68; }
+    .map-tab.active { background:var(--accent); color:white; }
+    .map-list { display:grid; gap:8px; max-height:360px; overflow:auto; }
+    .map-row { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
+    .map-row strong { display:block; font-size:13px; }
+    .map-row code { display:inline-block; margin-top:4px; color:#334e68; word-break:break-all; }
     table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:13px; vertical-align:top; }
     th { background:#eef3f8; color:#334e68; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
@@ -92,7 +106,7 @@ INDEX_HTML = """
     .pill.task { background:#ecfdf3; color:#067647; }
     .reason { color:var(--muted); max-width:520px; }
     @media (max-width: 1100px) { .workbench { grid-template-columns:1fr; } .panel { position:static; } }
-    @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } table { display:block; overflow-x:auto; } }
+    @media (max-width: 900px) { .kpis { grid-template-columns: repeat(2, minmax(140px, 1fr)); } .admin-grid { grid-template-columns:1fr; } table { display:block; overflow-x:auto; } }
   </style>
 </head>
 <body>
@@ -144,6 +158,35 @@ INDEX_HTML = """
         <div id="actionList" class="action-list"></div>
       </aside>
     </section>
+    <section class="admin" aria-label="Account mapping">
+      <div class="admin-head">
+        <div>
+          <h2>Account Mapping</h2>
+          <div id="mapStatus" class="small">Not loaded</div>
+        </div>
+        <div class="admin-controls">
+          <input id="serviceKey" type="password" autocomplete="off" aria-label="Service key" placeholder="Service key" />
+          <button id="loadMap">Load Mapping</button>
+        </div>
+      </div>
+      <div class="admin-grid">
+        <div>
+          <div class="map-tabs">
+            <button class="map-tab active" data-map-bucket="matched">Matched</button>
+            <button class="map-tab" data-map-bucket="ambiguous">Ambiguous</button>
+            <button class="map-tab" data-map-bucket="unmatched">Unmatched</button>
+          </div>
+          <div id="mapList" class="map-list"></div>
+        </div>
+        <div>
+          <div class="panel-actions">
+            <button id="copyMapJson" disabled>Copy JSON</button>
+            <button class="secondary" id="copyMapCsv" disabled>Copy CSV</button>
+          </div>
+          <textarea id="mapJson" readonly aria-label="ACCOUNT_ID_MAP_JSON"></textarea>
+        </div>
+      </div>
+    </section>
   </main>
   <script>
     const statusEl = document.getElementById("status");
@@ -154,9 +197,17 @@ INDEX_HTML = """
     const actionSummaryEl = document.getElementById("actionSummary");
     const planStatusEl = document.getElementById("planStatus");
     const actionListEl = document.getElementById("actionList");
+    const serviceKeyEl = document.getElementById("serviceKey");
+    const mapStatusEl = document.getElementById("mapStatus");
+    const mapListEl = document.getElementById("mapList");
+    const mapJsonEl = document.getElementById("mapJson");
     const selectedAccountIds = new Set();
     let portfolioData = null;
     let currentPlan = null;
+    let accountMapPreview = null;
+    let activeMapBucket = "matched";
+
+    serviceKeyEl.value = window.localStorage.getItem("acPulseServiceKey") || "";
 
     const money = value => new Intl.NumberFormat("en-US", {
       style: "currency", currency: "USD", maximumFractionDigits: 0
@@ -306,6 +357,79 @@ INDEX_HTML = """
       actionSummaryEl.textContent = result.status;
     }
 
+    async function loadAccountMapPreview() {
+      const key = serviceKeyEl.value.trim();
+      if (!key) {
+        mapStatusEl.textContent = "Service key required";
+        return;
+      }
+      window.localStorage.setItem("acPulseServiceKey", key);
+      mapStatusEl.textContent = "Loading mapping...";
+      mapListEl.innerHTML = "";
+      mapJsonEl.value = "";
+      const rep = repEl.value.trim() || "Kevin Oostema";
+      const response = await fetch(`/admin/account-map/preview?rep_name=${encodeURIComponent(rep)}`, {
+        headers: {"X-Service-Key": key}
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text.slice(0, 500));
+      }
+      accountMapPreview = await response.json();
+      const summary = accountMapPreview.summary;
+      mapStatusEl.textContent = `${summary.matched} matched, ${summary.ambiguous} ambiguous, ${summary.unmatched} unmatched`;
+      mapJsonEl.value = JSON.stringify(accountMapPreview.account_id_map || {}, null, 2);
+      document.getElementById("copyMapJson").disabled = false;
+      document.getElementById("copyMapCsv").disabled = false;
+      renderAccountMap();
+    }
+
+    function renderAccountMap() {
+      if (!accountMapPreview) {
+        mapListEl.innerHTML = "<div class='panel-status'>No mapping loaded.</div>";
+        return;
+      }
+      document.querySelectorAll(".map-tab").forEach(button => {
+        button.classList.toggle("active", button.dataset.mapBucket === activeMapBucket);
+      });
+      const rows = accountMapPreview[activeMapBucket] || [];
+      mapListEl.innerHTML = rows.slice(0, 100).map(row => {
+        if (activeMapBucket === "matched") {
+          return `<article class="map-row">
+            <strong>${escapeHtml(row.snowflake_account_name || row.snowflake_account_id)} -> ${escapeHtml(row.ac_account_name || row.ac_account_id)}</strong>
+            <code>${row.snowflake_account_id} -> ${row.ac_account_id}</code>
+          </article>`;
+        }
+        if (activeMapBucket === "ambiguous") {
+          const candidates = (row.candidates || [])
+            .map(candidate => `${candidate.ac_account_id}: ${candidate.ac_account_name || candidate.ac_account_url || "Unnamed"}`)
+            .join(" | ");
+          return `<article class="map-row">
+            <strong>${escapeHtml(row.snowflake_account_name || row.snowflake_account_id)}</strong>
+            <code>${escapeHtml(candidates)}</code>
+          </article>`;
+        }
+        return `<article class="map-row">
+          <strong>${escapeHtml(row.snowflake_account_name || row.snowflake_account_id)}</strong>
+          <code>${escapeHtml((row.match_keys || []).join(" | "))}</code>
+        </article>`;
+      }).join("") || "<div class='panel-status'>None</div>";
+    }
+
+    async function copyText(value, statusText) {
+      await navigator.clipboard.writeText(value);
+      mapStatusEl.textContent = statusText;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
     function clearPlan() {
       currentPlan = null;
       actionSummaryEl.textContent = "No plan loaded";
@@ -335,10 +459,24 @@ INDEX_HTML = """
     document.getElementById("planActions").addEventListener("click", () => previewActions().catch(showError));
     document.getElementById("commitActions").addEventListener("click", () => commitActions().catch(showError));
     document.getElementById("load").addEventListener("click", () => loadPortfolio().catch(showError));
+    document.getElementById("loadMap").addEventListener("click", () => loadAccountMapPreview().catch(showError));
+    document.getElementById("copyMapJson").addEventListener("click", () => {
+      copyText(mapJsonEl.value, "ACCOUNT_ID_MAP_JSON copied").catch(showError);
+    });
+    document.getElementById("copyMapCsv").addEventListener("click", () => {
+      copyText(accountMapPreview?.csv || "", "CSV copied").catch(showError);
+    });
+    document.querySelectorAll(".map-tab").forEach(button => {
+      button.addEventListener("click", event => {
+        activeMapBucket = event.target.dataset.mapBucket;
+        renderAccountMap();
+      });
+    });
 
     function showError(error) {
       statusEl.textContent = `Unable to load portfolio: ${error.message}`;
       planStatusEl.textContent = error.message;
+      mapStatusEl.textContent = error.message;
     }
 
     loadPortfolio().catch(showError);
@@ -492,7 +630,10 @@ async def account_pulse(account_id: int) -> dict[str, Any]:
     pulse = await build_account_pulse(
         snowflake_account_id=account_id,
         extractor_instances=extractors,
-        resolver=build_account_resolver(settings.account_id_map_path),
+        resolver=build_account_resolver(
+            settings.account_id_map_path,
+            settings.account_id_map_json,
+        ),
     )
     if pulse is None:
         raise HTTPException(status_code=404, detail="No account pulse found")
@@ -654,7 +795,10 @@ async def plan_actions(body: ActionPlanRequest) -> dict[str, Any]:
         portfolio=portfolio,
         account_ids=body.account_ids,
         limit=body.limit,
-        resolver=build_account_resolver(settings.account_id_map_path),
+        resolver=build_account_resolver(
+            settings.account_id_map_path,
+            settings.account_id_map_json,
+        ),
     )
 
 
@@ -676,7 +820,10 @@ async def commit_actions(body: ActionCommitRequest) -> dict[str, Any]:
         portfolio=portfolio,
         account_ids=body.account_ids,
         limit=body.limit,
-        resolver=build_account_resolver(settings.account_id_map_path),
+        resolver=build_account_resolver(
+            settings.account_id_map_path,
+            settings.account_id_map_json,
+        ),
     )
     async with ActiveCampaignAPI(
         base_url=settings.ac_api_url,

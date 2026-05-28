@@ -1,10 +1,13 @@
 import csv
+import json
 from pathlib import Path
+from typing import Any
 
 
 class AccountResolver:
-    def __init__(self, csv_path: Path):
+    def __init__(self, csv_path: Path, inline_json: str | None = None):
         self.csv_path = csv_path
+        self.inline_json = inline_json
         self._mapping = self._load_mapping()
 
     def resolve(self, snowflake_account_id: int) -> int:
@@ -17,6 +20,10 @@ class AccountResolver:
             ) from exc
 
     def _load_mapping(self) -> dict[int, int]:
+        inline_mapping = self._load_inline_mapping()
+        if inline_mapping:
+            return inline_mapping
+
         if not self.csv_path.exists():
             return {}
 
@@ -28,3 +35,22 @@ class AccountResolver:
                 ac_id = int(row["ac_account_id"])
                 mapping[sf_id] = ac_id
         return mapping
+
+    def _load_inline_mapping(self) -> dict[int, int]:
+        if not self.inline_json:
+            return {}
+
+        payload = json.loads(self.inline_json)
+        if not isinstance(payload, dict):
+            raise ValueError("ACCOUNT_ID_MAP_JSON must be a JSON object")
+
+        mapping: dict[int, int] = {}
+        for snowflake_account_id, ac_account_id in payload.items():
+            mapping[int(snowflake_account_id)] = _coerce_ac_account_id(ac_account_id)
+        return mapping
+
+
+def _coerce_ac_account_id(value: Any) -> int:
+    if isinstance(value, dict):
+        value = value.get("ac_account_id")
+    return int(value)

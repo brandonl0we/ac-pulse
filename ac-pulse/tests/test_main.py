@@ -16,6 +16,9 @@ async def test_index_returns_portfolio_shell() -> None:
     assert "Action Plan" in html
     assert "Preview Actions" in html
     assert "Commit Notes" in html
+    assert "Account Mapping" in html
+    assert "/admin/account-map/preview" in html
+    assert "ACCOUNT_ID_MAP_JSON" in html
     assert r"\\\"" not in html
     assert "class='selected'" in html
     assert "Kevin Oostema" in html
@@ -71,7 +74,7 @@ async def test_account_pulse_returns_built_pulse(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(main, "UtilizationExtractor", FakeExtractor)
     monkeypatch.setattr(main, "TouchpointsExtractor", FakeExtractor)
     monkeypatch.setattr(main, "RenewalExtractor", FakeExtractor)
-    monkeypatch.setattr(main, "build_account_resolver", lambda path: None)
+    monkeypatch.setattr(main, "build_account_resolver", lambda path, inline_json=None: None)
     monkeypatch.setattr(main, "build_account_pulse", fake_build_account_pulse)
 
     result = await main.account_pulse(42)
@@ -287,7 +290,11 @@ async def test_commit_actions_builds_plan_and_commits_selected_keys(
     )
     monkeypatch.setattr(main, "build_action_plan", fake_build_action_plan)
     monkeypatch.setattr(main, "commit_action_plan", fake_commit_action_plan)
-    monkeypatch.setattr(main, "build_account_resolver", lambda path: "resolver")
+    monkeypatch.setattr(
+        main,
+        "build_account_resolver",
+        lambda path, inline_json=None: "resolver",
+    )
 
     result = await main.commit_actions(
         main.ActionCommitRequest(
@@ -328,7 +335,7 @@ async def test_account_pulse_raises_404_when_missing(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(main, "UtilizationExtractor", FakeExtractor)
     monkeypatch.setattr(main, "TouchpointsExtractor", FakeExtractor)
     monkeypatch.setattr(main, "RenewalExtractor", FakeExtractor)
-    monkeypatch.setattr(main, "build_account_resolver", lambda path: None)
+    monkeypatch.setattr(main, "build_account_resolver", lambda path, inline_json=None: None)
     monkeypatch.setattr(main, "build_account_pulse", fake_build_account_pulse)
 
     with pytest.raises(HTTPException) as exc:

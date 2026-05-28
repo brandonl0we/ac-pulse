@@ -117,5 +117,8 @@ def _resolve_activecampaign_account_id(
         return None
 
 
-def build_account_resolver(csv_path: Path) -> AccountResolver:
-    return AccountResolver(csv_path)
+def build_account_resolver(
+    csv_path: Path,
+    inline_json: str | None = None,
+) -> AccountResolver:
+    return AccountResolver(csv_path, inline_json)
