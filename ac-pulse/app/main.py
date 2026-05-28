@@ -372,8 +372,7 @@ INDEX_HTML = """
         headers: {"X-Service-Key": key}
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text.slice(0, 500));
+        throw new Error(await responseErrorMessage(response));
       }
       accountMapPreview = await response.json();
       const summary = accountMapPreview.summary;
@@ -419,6 +418,15 @@ INDEX_HTML = """
     async function copyText(value, statusText) {
       await navigator.clipboard.writeText(value);
       mapStatusEl.textContent = statusText;
+    }
+
+    async function responseErrorMessage(response) {
+      const text = await response.text();
+      try {
+        const payload = JSON.parse(text);
+        if (payload.detail) return String(payload.detail).slice(0, 500);
+      } catch {}
+      return text.replace(/<[^>]*>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 500);
     }
 
     function escapeHtml(value) {
@@ -765,7 +773,7 @@ async def account_map_preview(
     except Exception as exc:
         logger.exception("account_map_preview_activecampaign_failed", rep_name=rep_name)
         raise HTTPException(
-            status_code=502,
+            status_code=424,
             detail=f"Unable to list ActiveCampaign accounts: {str(exc)[:1000]}",
         ) from exc
 

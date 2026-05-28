@@ -284,7 +284,7 @@ async def test_account_map_preview_reports_activecampaign_failure(
             x_service_key="secret",
         )
 
-    assert exc_info.value.status_code == 502
+    assert exc_info.value.status_code == 424
     assert "Unable to list ActiveCampaign accounts" in str(exc_info.value.detail)
 
 
