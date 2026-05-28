@@ -61,6 +61,33 @@ class ActiveCampaignAPI:
         response = await self._request("GET", f"/accounts/{account_id}")
         return cast(dict[str, Any], response.json())
 
+    async def list_accounts(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        response = await self._request(
+            "GET",
+            "/accounts",
+            params={"limit": limit, "offset": offset},
+        )
+        payload = cast(dict[str, Any], response.json())
+        rows = payload.get("accounts")
+        if not isinstance(rows, list):
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    async def list_all_accounts(self, *, page_size: int = 100) -> list[dict[str, Any]]:
+        accounts: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = await self.list_accounts(limit=page_size, offset=offset)
+            accounts.extend(page)
+            if len(page) < page_size:
+                return accounts
+            offset += page_size
+
     async def update_account_custom_fields(
         self,
         account_id: int,
@@ -127,6 +154,7 @@ class ActiveCampaignAPI:
         path: str,
         *,
         json: Mapping[str, Any] | None = None,
+        params: Mapping[str, Any] | None = None,
     ) -> httpx.Response:
         retries = 5
         for attempt in range(retries + 1):
@@ -136,6 +164,7 @@ class ActiveCampaignAPI:
                     method=method,
                     url=path,
                     json=json,
+                    params=params,
                     headers={"Authorization": f"Bearer {self._api_key}"},
                 )
             except httpx.RequestError:

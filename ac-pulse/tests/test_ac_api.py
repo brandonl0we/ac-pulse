@@ -85,3 +85,35 @@ async def test_create_account_note_posts_to_account_notes() -> None:
     assert request_mock.call_args.kwargs["json"] == {
         "note": {"note": "Follow up note"}
     }
+
+
+@pytest.mark.asyncio
+async def test_list_all_accounts_pages_until_short_page() -> None:
+    async with httpx.AsyncClient(base_url="https://example.test/api/3") as client:
+        api = ActiveCampaignAPI(
+            base_url="https://example.test/api/3",
+            api_key="key",
+            client=client,
+        )
+        with patch.object(
+            client,
+            "request",
+            side_effect=[
+                httpx.Response(
+                    status_code=200,
+                    request=httpx.Request("GET", "/accounts"),
+                    json={"accounts": [{"id": "1"}, {"id": "2"}]},
+                ),
+                httpx.Response(
+                    status_code=200,
+                    request=httpx.Request("GET", "/accounts"),
+                    json={"accounts": [{"id": "3"}]},
+                ),
+            ],
+        ) as request_mock:
+            payload = await api.list_all_accounts(page_size=2)
+
+    assert payload == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    assert request_mock.call_count == 2
+    assert request_mock.call_args_list[0].kwargs["params"] == {"limit": 2, "offset": 0}
+    assert request_mock.call_args_list[1].kwargs["params"] == {"limit": 2, "offset": 2}

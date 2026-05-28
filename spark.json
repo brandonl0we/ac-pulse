@@ -37,6 +37,10 @@
     {
       "path": "/actions/commit",
       "description": "Guarded customer success action writer. POST rep_name, selected dedupe_keys, optional account_ids, and confirm:true. Writes reviewed actions as ActiveCampaign account notes only."
+    },
+    {
+      "path": "/admin/account-map/preview",
+      "description": "Read-only Snowflake-to-ActiveCampaign account mapping preview. Requires X-Service-Key. Returns matched, ambiguous, unmatched, and CSV mapping rows for review."
     }
   ]
 }

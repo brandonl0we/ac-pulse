@@ -180,6 +180,63 @@ async def test_plan_actions_builds_dry_run_from_portfolio(
 
 
 @pytest.mark.asyncio
+async def test_account_map_preview_builds_read_only_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeActiveCampaignAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeActiveCampaignAPI":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def list_all_accounts(self) -> list[dict[str, Any]]:
+            return [{"id": "9001", "accountUrl": "https://biofit.activehosted.com"}]
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["snowflake_client"], FakeSnowflakeClient)
+        assert kwargs["rep_name"] == "Kevin Oostema"
+        return {
+            "success_rep_name": "Kevin Oostema",
+            "accounts": [
+                {
+                    "account_id": 1043604,
+                    "account_name": "biofit.activehosted.com",
+                    "account_web_domain": "biofit.example",
+                    "arr": 14721,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(main.settings, "service_api_key", "secret")
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+
+    result = await main.account_map_preview(
+        rep_name="Kevin Oostema",
+        x_service_key="secret",
+    )
+
+    assert result["mode"] == "read_only"
+    assert result["summary"]["matched"] == 1
+    assert "1043604,9001" in result["csv"]
+
+
+@pytest.mark.asyncio
 async def test_commit_actions_builds_plan_and_commits_selected_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

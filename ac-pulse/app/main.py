@@ -11,6 +11,7 @@ from redis.asyncio import Redis
 
 from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
+from app.account_mapping import build_account_map_preview
 from app.actions import build_action_plan, commit_action_plan
 from app.audit import configure_audit, get_last_success_by_worker, get_recent_audit_rows
 from app.config import get_settings
@@ -589,6 +590,36 @@ async def smoke_snowflake(
 
 class LookupEmailRequest(BaseModel):
     email: str = Field(..., min_length=3, description="Email address to dedupe-check.")
+
+
+@app.get("/admin/account-map/preview")
+async def account_map_preview(
+    rep_name: str = Query(default="Kevin Oostema", min_length=1),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, Any]:
+    _require_service_key(x_service_key)
+    try:
+        portfolio = await build_success_rep_portfolio(
+            snowflake_client=SnowflakeClient(settings),
+            rep_name=rep_name,
+        )
+    except Exception as exc:
+        logger.exception("account_map_preview_portfolio_failed", rep_name=rep_name)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to build account map preview: {str(exc)[:1000]}",
+        ) from exc
+
+    async with ActiveCampaignAPI(
+        base_url=settings.ac_api_url,
+        api_key=settings.ac_api_key,
+    ) as api:
+        ac_accounts = await api.list_all_accounts()
+
+    return build_account_map_preview(
+        portfolio=portfolio,
+        activecampaign_accounts=ac_accounts,
+    )
 
 
 class ActionPlanRequest(BaseModel):

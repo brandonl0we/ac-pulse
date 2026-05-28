@@ -65,6 +65,7 @@ def _shape_account(row: dict[str, Any]) -> dict[str, Any]:
         "success_ownership_bucket": row.get("SUCCESS_OWNERSHIP_BUCKET"),
         "plan_tier_name": row.get("PLAN_TIER_NAME"),
         "product_line_actual": row.get("PRODUCT_LINE_ACTUAL"),
+        "account_web_domain": _as_str_or_none(row.get("ACCOUNT_WEB_DOMAIN")),
         "region": row.get("REGION"),
         "mrr": _as_float(row.get("MRR")),
         "arr": arr,
