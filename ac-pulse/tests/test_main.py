@@ -448,6 +448,68 @@ async def test_account_materialization_plan_builds_dry_run(
 
 
 @pytest.mark.asyncio
+async def test_account_materialization_post_reuses_loaded_portfolio(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    class FakeActiveCampaignAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeActiveCampaignAPI":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def list_all_accounts(self) -> list[dict[str, Any]]:
+            return []
+
+        async def search_contacts(
+            self,
+            *,
+            search: str,
+            limit: int = 100,
+            offset: int = 0,
+        ) -> list[dict[str, Any]]:
+            assert search == "example.com"
+            assert limit == 50
+            assert offset == 0
+            return [{"id": "101", "email": "owner@example.com"}]
+
+    async def fail_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("POST should use the already-loaded portfolio rows")
+
+    monkeypatch.setattr(main.settings, "service_api_key", "secret")
+    monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fail_build_success_rep_portfolio,
+    )
+
+    result = await main.account_materialization_plan_from_loaded_portfolio(
+        main.AccountMaterializationPlanRequest(
+            rep_name="Kevin Oostema",
+            accounts=[
+                {
+                    "account_id": 42,
+                    "account_name": "Example Co",
+                    "account_web_domain": "example.com",
+                    "arr": 12000,
+                }
+            ],
+            limit=5,
+        ),
+        x_service_key="secret",
+    )
+
+    assert result["mode"] == "dry_run"
+    assert result["summary"]["create_account_and_associate_contacts"] == 1
+
+
+@pytest.mark.asyncio
 async def test_commit_actions_builds_plan_and_commits_selected_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

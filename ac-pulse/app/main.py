@@ -41,9 +41,9 @@ configure_audit(SnowflakeClient(settings))
 # Redis is reachable); the first /lookup call resolves it.
 _redis_client: Redis | None = None
 PORTFOLIO_TIMEOUT_SECONDS = 45
-AC_ACCOUNT_LIST_TIMEOUT_SECONDS = 30
-AC_CONTACT_SEARCH_TIMEOUT_SECONDS = 30
-AC_CONTACT_SEARCH_PER_ACCOUNT_TIMEOUT_SECONDS = 6
+AC_ACCOUNT_LIST_TIMEOUT_SECONDS = 6
+AC_CONTACT_SEARCH_TIMEOUT_SECONDS = 18
+AC_CONTACT_SEARCH_PER_ACCOUNT_TIMEOUT_SECONDS = 4
 
 INDEX_HTML = """
 <!doctype html>
@@ -413,8 +413,11 @@ INDEX_HTML = """
       materializationStatusEl.textContent = "Building creation plan...";
       materializationListEl.innerHTML = "";
       const rep = repEl.value.trim() || "Kevin Oostema";
-      const response = await fetchWithTimeout(`/admin/account-materialization/plan?rep_name=${encodeURIComponent(rep)}&limit=5`, {
-        headers: {"X-Service-Key": key}
+      const accounts = (portfolioData?.accounts || []).slice(0, 5);
+      const response = await fetchWithTimeout("/admin/account-materialization/plan", {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-Service-Key": key},
+        body: JSON.stringify({rep_name: rep, accounts, limit: 5})
       });
       if (!response.ok) {
         throw new Error(await responseErrorMessage(response));
@@ -900,6 +903,29 @@ async def account_map_preview(
     )
 
 
+class AccountMaterializationPlanRequest(BaseModel):
+    rep_name: str = Field(default="Kevin Oostema", min_length=1)
+    accounts: list[dict[str, Any]] = Field(default_factory=list)
+    limit: int = Field(default=5, ge=1, le=25)
+
+
+@app.post("/admin/account-materialization/plan")
+async def account_materialization_plan_from_loaded_portfolio(
+    body: AccountMaterializationPlanRequest,
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, Any]:
+    _require_service_key(x_service_key)
+    portfolio = {
+        "success_rep_name": body.rep_name,
+        "accounts": body.accounts[: body.limit],
+    }
+    return await _build_account_materialization_plan_response(
+        portfolio=portfolio,
+        limit=body.limit,
+        rep_name=body.rep_name,
+    )
+
+
 @app.get("/admin/account-materialization/plan")
 async def account_materialization_plan(
     rep_name: str = Query(default="Kevin Oostema", min_length=1),
@@ -931,6 +957,19 @@ async def account_materialization_plan(
             detail=f"Unable to build account creation plan: {str(exc)[:1000]}",
         ) from exc
 
+    return await _build_account_materialization_plan_response(
+        portfolio=portfolio,
+        limit=limit,
+        rep_name=rep_name,
+    )
+
+
+async def _build_account_materialization_plan_response(
+    *,
+    portfolio: dict[str, Any],
+    limit: int,
+    rep_name: str,
+) -> dict[str, Any]:
     accounts = [
         account
         for account in portfolio.get("accounts", [])[:limit]
