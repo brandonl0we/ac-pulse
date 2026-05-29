@@ -19,9 +19,11 @@ async def test_index_returns_portfolio_shell() -> None:
     assert "Preview Actions" in html
     assert "Commit Notes" in html
     assert "Account Mapping" in html
+    assert "Account Creation Plan" in html
     assert "AC accounts seen" in html
     assert "AC sample" in html
     assert "/admin/account-map/preview" in html
+    assert "/admin/account-materialization/plan" in html
     assert "ACCOUNT_ID_MAP_JSON" in html
     assert r"\\\"" not in html
     assert "class='selected'" in html
@@ -370,6 +372,76 @@ async def test_account_map_preview_reports_activecampaign_timeout(
 
     assert exc_info.value.status_code == 424
     assert "ActiveCampaign did not respond" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_account_materialization_plan_builds_dry_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeActiveCampaignAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeActiveCampaignAPI":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def list_all_accounts(self) -> list[dict[str, Any]]:
+            return []
+
+        async def search_contacts(
+            self,
+            *,
+            search: str,
+            limit: int = 100,
+            offset: int = 0,
+        ) -> list[dict[str, Any]]:
+            assert search == "example.com"
+            assert limit == 100
+            assert offset == 0
+            return [{"id": "101", "email": "owner@example.com"}]
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        assert isinstance(kwargs["snowflake_client"], FakeSnowflakeClient)
+        assert kwargs["rep_name"] == "Kevin Oostema"
+        return {
+            "success_rep_name": "Kevin Oostema",
+            "accounts": [
+                {
+                    "account_id": 42,
+                    "account_name": "Example Co",
+                    "account_web_domain": "example.com",
+                    "arr": 12000,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(main.settings, "service_api_key", "secret")
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+
+    result = await main.account_materialization_plan(
+        rep_name="Kevin Oostema",
+        limit=10,
+        x_service_key="secret",
+    )
+
+    assert result["mode"] == "dry_run"
+    assert result["summary"]["create_account_and_associate_contacts"] == 1
+    assert result["accounts"][0]["matching_contact_count"] == 1
 
 
 @pytest.mark.asyncio

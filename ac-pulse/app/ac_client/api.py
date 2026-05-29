@@ -88,6 +88,24 @@ class ActiveCampaignAPI:
                 return accounts
             offset += page_size
 
+    async def search_contacts(
+        self,
+        *,
+        search: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        response = await self._request(
+            "GET",
+            "/contacts",
+            params={"search": search, "limit": limit, "offset": offset},
+        )
+        payload = cast(dict[str, Any], response.json())
+        rows = payload.get("contacts")
+        if not isinstance(rows, list):
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
     async def update_account_custom_fields(
         self,
         account_id: int,

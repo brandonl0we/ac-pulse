@@ -125,3 +125,32 @@ async def test_list_all_accounts_pages_until_short_page() -> None:
     assert request_mock.call_args_list[1].kwargs["params"] == {"limit": 2, "offset": 2}
     assert request_mock.call_args_list[0].kwargs["url"] == "accounts"
     assert request_mock.call_args_list[0].kwargs["headers"] == {"Api-Token": "key"}
+
+
+@pytest.mark.asyncio
+async def test_search_contacts_uses_contact_search_endpoint() -> None:
+    async with httpx.AsyncClient(base_url="https://example.test/api/3") as client:
+        api = ActiveCampaignAPI(
+            base_url="https://example.test/api/3",
+            api_key="key",
+            client=client,
+        )
+        with patch.object(
+            client,
+            "request",
+            return_value=httpx.Response(
+                status_code=200,
+                request=httpx.Request("GET", "/contacts"),
+                json={"contacts": [{"id": "101", "email": "buyer@example.com"}]},
+            ),
+        ) as request_mock:
+            contacts = await api.search_contacts(search="example.com")
+
+    assert contacts == [{"id": "101", "email": "buyer@example.com"}]
+    assert request_mock.call_args.kwargs["url"] == "contacts"
+    assert request_mock.call_args.kwargs["params"] == {
+        "search": "example.com",
+        "limit": 100,
+        "offset": 0,
+    }
+    assert request_mock.call_args.kwargs["headers"] == {"Api-Token": "key"}

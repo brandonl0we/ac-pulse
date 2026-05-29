@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 from app.ac_client.api import ActiveCampaignAPI
 from app.ac_client.field_bootstrap import AccountFieldBootstrapper
 from app.account_mapping import build_account_map_preview
+from app.account_materialization import build_account_materialization_plan
 from app.actions import build_action_plan, commit_action_plan
 from app.audit import configure_audit, get_last_success_by_worker, get_recent_audit_rows
 from app.config import get_settings
@@ -41,6 +42,7 @@ configure_audit(SnowflakeClient(settings))
 _redis_client: Redis | None = None
 PORTFOLIO_TIMEOUT_SECONDS = 45
 AC_ACCOUNT_LIST_TIMEOUT_SECONDS = 30
+AC_CONTACT_SEARCH_TIMEOUT_SECONDS = 30
 
 INDEX_HTML = """
 <!doctype html>
@@ -96,6 +98,9 @@ INDEX_HTML = """
     .map-row { border:1px solid var(--line); border-radius:8px; padding:10px; background:#fbfdff; }
     .map-row strong { display:block; font-size:13px; }
     .map-row code { display:inline-block; margin-top:4px; color:#334e68; word-break:break-all; }
+    .materialization { margin-top:18px; border-top:1px solid var(--line); padding-top:16px; }
+    .materialization-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+    .materialization h3 { margin:0; font-size:16px; letter-spacing:0; }
     table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:hidden; }
     th, td { padding:10px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:13px; vertical-align:top; }
     th { background:#eef3f8; color:#334e68; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
@@ -189,6 +194,16 @@ INDEX_HTML = """
           <textarea id="mapJson" readonly aria-label="ACCOUNT_ID_MAP_JSON"></textarea>
         </div>
       </div>
+      <div class="materialization">
+        <div class="materialization-head">
+          <div>
+            <h3>Account Creation Plan</h3>
+            <div id="materializationStatus" class="small">Preview the contact-first AC Account work for the first 10 portfolio accounts.</div>
+          </div>
+          <button id="loadMaterializationPlan">Preview Creation Plan</button>
+        </div>
+        <div id="materializationList" class="map-list"></div>
+      </div>
     </section>
   </main>
   <script>
@@ -204,6 +219,8 @@ INDEX_HTML = """
     const mapStatusEl = document.getElementById("mapStatus");
     const mapListEl = document.getElementById("mapList");
     const mapJsonEl = document.getElementById("mapJson");
+    const materializationStatusEl = document.getElementById("materializationStatus");
+    const materializationListEl = document.getElementById("materializationList");
     const selectedAccountIds = new Set();
     let portfolioData = null;
     let currentPlan = null;
@@ -385,6 +402,39 @@ INDEX_HTML = """
       renderAccountMap();
     }
 
+    async function loadMaterializationPlan() {
+      const key = serviceKeyEl.value.trim();
+      if (!key) {
+        materializationStatusEl.textContent = "Service key required";
+        return;
+      }
+      window.localStorage.setItem("acPulseServiceKey", key);
+      materializationStatusEl.textContent = "Building creation plan...";
+      materializationListEl.innerHTML = "";
+      const rep = repEl.value.trim() || "Kevin Oostema";
+      const response = await fetchWithTimeout(`/admin/account-materialization/plan?rep_name=${encodeURIComponent(rep)}&limit=10`, {
+        headers: {"X-Service-Key": key}
+      });
+      if (!response.ok) {
+        throw new Error(await responseErrorMessage(response));
+      }
+      const plan = await response.json();
+      const summary = plan.summary || {};
+      materializationStatusEl.textContent = [
+        `${summary.create_account_and_associate_contacts || 0} to create`,
+        `${summary.associate_contacts_to_existing_account || 0} to associate`,
+        `${summary.needs_review || 0} need review`
+      ].join(", ");
+      materializationListEl.innerHTML = (plan.accounts || []).map(row => {
+        const contacts = row.matching_contact_count || 0;
+        const existing = row.existing_ac_account?.ac_account_id ? `AC ${row.existing_ac_account.ac_account_id}` : "No AC account";
+        return `<article class="map-row">
+          <strong>${escapeHtml(row.snowflake_account_name || row.snowflake_account_id)} - ${escapeHtml(row.action)}</strong>
+          <code>${escapeHtml(existing)} | ${contacts} matching contacts | ${row.account_web_domain || "no domain"}</code>
+        </article>`;
+      }).join("") || "<div class='panel-status'>No accounts found.</div>";
+    }
+
     function renderAccountMap() {
       if (!accountMapPreview) {
         mapListEl.innerHTML = "<div class='panel-status'>No mapping loaded.</div>";
@@ -495,6 +545,7 @@ INDEX_HTML = """
     document.getElementById("commitActions").addEventListener("click", () => commitActions().catch(showError));
     document.getElementById("load").addEventListener("click", () => loadPortfolio().catch(showError));
     document.getElementById("loadMap").addEventListener("click", () => loadAccountMapPreview().catch(showError));
+    document.getElementById("loadMaterializationPlan").addEventListener("click", () => loadMaterializationPlan().catch(showError));
     document.getElementById("copyMapJson").addEventListener("click", () => {
       copyText(mapJsonEl.value, "ACCOUNT_ID_MAP_JSON copied").catch(showError);
     });
@@ -512,6 +563,7 @@ INDEX_HTML = """
       statusEl.textContent = `Unable to load portfolio: ${error.message}`;
       planStatusEl.textContent = error.message;
       mapStatusEl.textContent = error.message;
+      materializationStatusEl.textContent = error.message;
     }
 
     loadPortfolio().catch(showError);
@@ -844,6 +896,109 @@ async def account_map_preview(
         portfolio=portfolio,
         activecampaign_accounts=ac_accounts,
     )
+
+
+@app.get("/admin/account-materialization/plan")
+async def account_materialization_plan(
+    rep_name: str = Query(default="Kevin Oostema", min_length=1),
+    limit: int = Query(default=10, ge=1, le=50),
+    x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
+) -> dict[str, Any]:
+    _require_service_key(x_service_key)
+    try:
+        portfolio = await asyncio.wait_for(
+            build_success_rep_portfolio(
+                snowflake_client=SnowflakeClient(settings),
+                rep_name=rep_name,
+            ),
+            timeout=PORTFOLIO_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        logger.exception("account_materialization_plan_portfolio_timeout", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to build account creation plan: Snowflake/Zapier did not "
+                f"respond within {PORTFOLIO_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.exception("account_materialization_plan_portfolio_failed", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=f"Unable to build account creation plan: {str(exc)[:1000]}",
+        ) from exc
+
+    accounts = [
+        account
+        for account in portfolio.get("accounts", [])[:limit]
+        if isinstance(account, dict)
+    ]
+    try:
+        async with ActiveCampaignAPI(
+            base_url=settings.ac_api_url,
+            api_key=settings.ac_api_key,
+        ) as api:
+            ac_accounts = await asyncio.wait_for(
+                api.list_all_accounts(),
+                timeout=AC_ACCOUNT_LIST_TIMEOUT_SECONDS,
+            )
+            contacts_by_account_id = await asyncio.wait_for(
+                _find_contacts_by_account_domain(api=api, accounts=accounts),
+                timeout=AC_CONTACT_SEARCH_TIMEOUT_SECONDS,
+            )
+    except TimeoutError as exc:
+        logger.exception("account_materialization_plan_activecampaign_timeout", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to build account creation plan: ActiveCampaign did not "
+                f"respond within {AC_CONTACT_SEARCH_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.exception("account_materialization_plan_activecampaign_failed", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=f"Unable to build account creation plan: {str(exc)[:1000]}",
+        ) from exc
+
+    return build_account_materialization_plan(
+        portfolio=portfolio,
+        activecampaign_accounts=ac_accounts,
+        contacts_by_account_id=contacts_by_account_id,
+        limit=limit,
+    )
+
+
+async def _find_contacts_by_account_domain(
+    *,
+    api: ActiveCampaignAPI,
+    accounts: list[dict[str, Any]],
+) -> dict[int, list[dict[str, Any]]]:
+    contacts_by_account_id: dict[int, list[dict[str, Any]]] = {}
+    for account in accounts:
+        domain = _business_domain(account.get("account_web_domain"))
+        if not domain:
+            contacts_by_account_id[int(account["account_id"])] = []
+            continue
+        contacts = await api.search_contacts(search=domain, limit=100)
+        contacts_by_account_id[int(account["account_id"])] = [
+            contact for contact in contacts if _contact_matches_domain(contact, domain)
+        ]
+    return contacts_by_account_id
+
+
+def _business_domain(value: Any) -> str | None:
+    domain = str(value or "").strip().casefold()
+    if not domain or domain.endswith(".activehosted.com"):
+        return None
+    return domain.removeprefix("@")
+
+
+def _contact_matches_domain(contact: dict[str, Any], domain: str) -> bool:
+    email = str(contact.get("email") or "").strip().casefold()
+    return email.endswith(f"@{domain}")
 
 
 class ActionPlanRequest(BaseModel):

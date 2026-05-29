@@ -3,6 +3,11 @@
   "resources": {
     "size": "medium"
   },
+  "acosData": {
+    "vendors": [
+      "ac-crm"
+    ]
+  },
   "workers": [
     {
       "name": "arq-worker",
@@ -45,6 +50,10 @@
     {
       "path": "/admin/account-map/preview",
       "description": "Read-only Snowflake-to-ActiveCampaign account mapping preview. Requires X-Service-Key. Returns matched, ambiguous, unmatched, and CSV mapping rows for review."
+    },
+    {
+      "path": "/admin/account-materialization/plan",
+      "description": "Read-only contact-first ActiveCampaign account materialization plan. Requires X-Service-Key. Proposes which AC Accounts to use or create and which matching contacts would need association."
     }
   ]
 }
