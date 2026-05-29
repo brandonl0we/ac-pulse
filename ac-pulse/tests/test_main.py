@@ -395,7 +395,8 @@ async def test_account_materialization_plan_builds_dry_run(
             return None
 
         async def list_all_accounts(self) -> list[dict[str, Any]]:
-            return []
+            await main.asyncio.sleep(0.02)
+            return [{"id": "9001", "name": "Slow Account"}]
 
         async def search_contacts(
             self,
@@ -405,7 +406,7 @@ async def test_account_materialization_plan_builds_dry_run(
             offset: int = 0,
         ) -> list[dict[str, Any]]:
             assert search == "example.com"
-            assert limit == 100
+            assert limit == 50
             assert offset == 0
             return [{"id": "101", "email": "owner@example.com"}]
 
@@ -425,6 +426,7 @@ async def test_account_materialization_plan_builds_dry_run(
         }
 
     monkeypatch.setattr(main.settings, "service_api_key", "secret")
+    monkeypatch.setattr(main, "AC_ACCOUNT_LIST_TIMEOUT_SECONDS", 0.001)
     monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
     monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
     monkeypatch.setattr(
@@ -440,6 +442,7 @@ async def test_account_materialization_plan_builds_dry_run(
     )
 
     assert result["mode"] == "dry_run"
+    assert result["source"]["diagnostics"]["activecampaign_account_lookup"] == "timeout"
     assert result["summary"]["create_account_and_associate_contacts"] == 1
     assert result["accounts"][0]["matching_contact_count"] == 1
 

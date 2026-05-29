@@ -10,6 +10,7 @@ def build_account_materialization_plan(
     activecampaign_accounts: list[dict[str, Any]],
     contacts_by_account_id: dict[int, list[dict[str, Any]]],
     limit: int,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     accounts = [
         account
@@ -90,6 +91,7 @@ def build_account_materialization_plan(
             "rep_name": portfolio.get("success_rep_name"),
             "snowflake_accounts_considered": len(accounts),
             "activecampaign_accounts": len(activecampaign_accounts),
+            "diagnostics": diagnostics or {},
         },
         "summary": {
             "use_existing_account": _count(rows, "use_existing_account"),

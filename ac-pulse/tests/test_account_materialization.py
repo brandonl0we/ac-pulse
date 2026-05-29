@@ -19,9 +19,11 @@ def test_build_account_materialization_plan_proposes_create_and_associate() -> N
             42: [{"id": "101", "email": "buyer@example.com", "firstName": "Bea"}]
         },
         limit=10,
+        diagnostics={"activecampaign_account_lookup": "timeout"},
     )
 
     assert plan["mode"] == "dry_run"
+    assert plan["source"]["diagnostics"]["activecampaign_account_lookup"] == "timeout"
     assert plan["summary"]["create_account_and_associate_contacts"] == 1
     assert plan["accounts"][0]["action"] == "create_account_and_associate_contacts"
     assert plan["accounts"][0]["matching_contact_count"] == 1

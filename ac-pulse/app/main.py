@@ -43,6 +43,7 @@ _redis_client: Redis | None = None
 PORTFOLIO_TIMEOUT_SECONDS = 45
 AC_ACCOUNT_LIST_TIMEOUT_SECONDS = 30
 AC_CONTACT_SEARCH_TIMEOUT_SECONDS = 30
+AC_CONTACT_SEARCH_PER_ACCOUNT_TIMEOUT_SECONDS = 6
 
 INDEX_HTML = """
 <!doctype html>
@@ -198,7 +199,7 @@ INDEX_HTML = """
         <div class="materialization-head">
           <div>
             <h3>Account Creation Plan</h3>
-            <div id="materializationStatus" class="small">Preview the contact-first AC Account work for the first 10 portfolio accounts.</div>
+            <div id="materializationStatus" class="small">Preview the contact-first AC Account work for the first 5 portfolio accounts.</div>
           </div>
           <button id="loadMaterializationPlan">Preview Creation Plan</button>
         </div>
@@ -412,7 +413,7 @@ INDEX_HTML = """
       materializationStatusEl.textContent = "Building creation plan...";
       materializationListEl.innerHTML = "";
       const rep = repEl.value.trim() || "Kevin Oostema";
-      const response = await fetchWithTimeout(`/admin/account-materialization/plan?rep_name=${encodeURIComponent(rep)}&limit=10`, {
+      const response = await fetchWithTimeout(`/admin/account-materialization/plan?rep_name=${encodeURIComponent(rep)}&limit=5`, {
         headers: {"X-Service-Key": key}
       });
       if (!response.ok) {
@@ -423,7 +424,8 @@ INDEX_HTML = """
       materializationStatusEl.textContent = [
         `${summary.create_account_and_associate_contacts || 0} to create`,
         `${summary.associate_contacts_to_existing_account || 0} to associate`,
-        `${summary.needs_review || 0} need review`
+        `${summary.needs_review || 0} need review`,
+        `AC accounts: ${plan.source?.diagnostics?.activecampaign_account_lookup || "ok"}`
       ].join(", ");
       materializationListEl.innerHTML = (plan.accounts || []).map(row => {
         const contacts = row.matching_contact_count || 0;
@@ -901,7 +903,7 @@ async def account_map_preview(
 @app.get("/admin/account-materialization/plan")
 async def account_materialization_plan(
     rep_name: str = Query(default="Kevin Oostema", min_length=1),
-    limit: int = Query(default=10, ge=1, le=50),
+    limit: int = Query(default=5, ge=1, le=25),
     x_service_key: str | None = Header(default=None, alias="X-Service-Key"),
 ) -> dict[str, Any]:
     _require_service_key(x_service_key)
@@ -934,40 +936,71 @@ async def account_materialization_plan(
         for account in portfolio.get("accounts", [])[:limit]
         if isinstance(account, dict)
     ]
-    try:
-        async with ActiveCampaignAPI(
-            base_url=settings.ac_api_url,
-            api_key=settings.ac_api_key,
-        ) as api:
+    diagnostics: dict[str, Any] = {
+        "activecampaign_account_lookup": "ok",
+        "activecampaign_contact_lookup": "ok",
+        "contact_lookup_errors": {},
+    }
+    async with ActiveCampaignAPI(
+        base_url=settings.ac_api_url,
+        api_key=settings.ac_api_key,
+    ) as api:
+        try:
             ac_accounts = await asyncio.wait_for(
                 api.list_all_accounts(),
                 timeout=AC_ACCOUNT_LIST_TIMEOUT_SECONDS,
             )
+        except TimeoutError:
+            logger.warning(
+                "account_materialization_plan_account_list_timeout",
+                rep_name=rep_name,
+            )
+            ac_accounts = []
+            diagnostics["activecampaign_account_lookup"] = "timeout"
+        except Exception as exc:
+            logger.warning(
+                "account_materialization_plan_account_list_failed",
+                rep_name=rep_name,
+                error=str(exc)[:500],
+            )
+            ac_accounts = []
+            diagnostics["activecampaign_account_lookup"] = f"failed: {str(exc)[:300]}"
+
+        try:
             contacts_by_account_id = await asyncio.wait_for(
-                _find_contacts_by_account_domain(api=api, accounts=accounts),
+                _find_contacts_by_account_domain(
+                    api=api,
+                    accounts=accounts,
+                    diagnostics=diagnostics,
+                ),
                 timeout=AC_CONTACT_SEARCH_TIMEOUT_SECONDS,
             )
-    except TimeoutError as exc:
-        logger.exception("account_materialization_plan_activecampaign_timeout", rep_name=rep_name)
-        raise HTTPException(
-            status_code=424,
-            detail=(
-                "Unable to build account creation plan: ActiveCampaign did not "
-                f"respond within {AC_CONTACT_SEARCH_TIMEOUT_SECONDS} seconds"
-            ),
-        ) from exc
-    except Exception as exc:
-        logger.exception("account_materialization_plan_activecampaign_failed", rep_name=rep_name)
-        raise HTTPException(
-            status_code=424,
-            detail=f"Unable to build account creation plan: {str(exc)[:1000]}",
-        ) from exc
+        except TimeoutError:
+            logger.warning(
+                "account_materialization_plan_contact_lookup_timeout",
+                rep_name=rep_name,
+            )
+            contacts_by_account_id = {
+                int(account["account_id"]): [] for account in accounts
+            }
+            diagnostics["activecampaign_contact_lookup"] = "timeout"
+        except Exception as exc:
+            logger.warning(
+                "account_materialization_plan_contact_lookup_failed",
+                rep_name=rep_name,
+                error=str(exc)[:500],
+            )
+            contacts_by_account_id = {
+                int(account["account_id"]): [] for account in accounts
+            }
+            diagnostics["activecampaign_contact_lookup"] = f"failed: {str(exc)[:300]}"
 
     return build_account_materialization_plan(
         portfolio=portfolio,
         activecampaign_accounts=ac_accounts,
         contacts_by_account_id=contacts_by_account_id,
         limit=limit,
+        diagnostics=diagnostics,
     )
 
 
@@ -975,15 +1008,34 @@ async def _find_contacts_by_account_domain(
     *,
     api: ActiveCampaignAPI,
     accounts: list[dict[str, Any]],
+    diagnostics: dict[str, Any],
 ) -> dict[int, list[dict[str, Any]]]:
     contacts_by_account_id: dict[int, list[dict[str, Any]]] = {}
     for account in accounts:
+        snowflake_account_id = int(account["account_id"])
         domain = _business_domain(account.get("account_web_domain"))
         if not domain:
-            contacts_by_account_id[int(account["account_id"])] = []
+            contacts_by_account_id[snowflake_account_id] = []
             continue
-        contacts = await api.search_contacts(search=domain, limit=100)
-        contacts_by_account_id[int(account["account_id"])] = [
+        try:
+            contacts = await asyncio.wait_for(
+                api.search_contacts(search=domain, limit=50),
+                timeout=AC_CONTACT_SEARCH_PER_ACCOUNT_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            diagnostics["contact_lookup_errors"][str(snowflake_account_id)] = (
+                "timeout"
+            )
+            contacts_by_account_id[snowflake_account_id] = []
+            continue
+        except Exception as exc:
+            diagnostics["contact_lookup_errors"][str(snowflake_account_id)] = (
+                str(exc)[:300]
+            )
+            contacts_by_account_id[snowflake_account_id] = []
+            continue
+
+        contacts_by_account_id[snowflake_account_id] = [
             contact for contact in contacts if _contact_matches_domain(contact, domain)
         ]
     return contacts_by_account_id
