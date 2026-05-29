@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 import time
 from pathlib import Path
@@ -38,6 +39,8 @@ configure_audit(SnowflakeClient(settings))
 # connection at module load (Spark may start the web process before
 # Redis is reachable); the first /lookup call resolves it.
 _redis_client: Redis | None = None
+PORTFOLIO_TIMEOUT_SECONDS = 45
+AC_ACCOUNT_LIST_TIMEOUT_SECONDS = 30
 
 INDEX_HTML = """
 <!doctype html>
@@ -206,6 +209,7 @@ INDEX_HTML = """
     let currentPlan = null;
     let accountMapPreview = null;
     let activeMapBucket = "matched";
+    const REQUEST_TIMEOUT_MS = 45000;
 
     serviceKeyEl.value = window.localStorage.getItem("acPulseServiceKey") || "";
 
@@ -227,10 +231,9 @@ INDEX_HTML = """
       currentPlan = null;
       selectedAccountIds.clear();
       updateSelectionStatus();
-      const response = await fetch(`/portfolio?rep_name=${encodeURIComponent(rep)}`);
+      const response = await fetchWithTimeout(`/portfolio?rep_name=${encodeURIComponent(rep)}`);
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text.slice(0, 500));
+        throw new Error(await responseErrorMessage(response));
       }
       const data = await response.json();
       portfolioData = data;
@@ -297,7 +300,7 @@ INDEX_HTML = """
       }
       planStatusEl.textContent = "Building dry-run action plan...";
       actionListEl.innerHTML = "";
-      const response = await fetch("/actions/plan", {
+      const response = await fetchWithTimeout("/actions/plan", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
@@ -307,8 +310,7 @@ INDEX_HTML = """
         })
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text.slice(0, 500));
+        throw new Error(await responseErrorMessage(response));
       }
       const plan = await response.json();
       currentPlan = plan;
@@ -337,7 +339,7 @@ INDEX_HTML = """
       const confirmed = window.confirm("Write the reviewed actions as ActiveCampaign account notes?");
       if (!confirmed) return;
       planStatusEl.textContent = "Writing reviewed actions to ActiveCampaign...";
-      const response = await fetch("/actions/commit", {
+      const response = await fetchWithTimeout("/actions/commit", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({
@@ -349,8 +351,7 @@ INDEX_HTML = """
         })
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text.slice(0, 500));
+        throw new Error(await responseErrorMessage(response));
       }
       const result = await response.json();
       planStatusEl.textContent = `${result.summary.committed} committed, ${result.summary.skipped} skipped.`;
@@ -368,7 +369,7 @@ INDEX_HTML = """
       mapListEl.innerHTML = "";
       mapJsonEl.value = "";
       const rep = repEl.value.trim() || "Kevin Oostema";
-      const response = await fetch(`/admin/account-map/preview?rep_name=${encodeURIComponent(rep)}`, {
+      const response = await fetchWithTimeout(`/admin/account-map/preview?rep_name=${encodeURIComponent(rep)}`, {
         headers: {"X-Service-Key": key}
       });
       if (!response.ok) {
@@ -429,6 +430,21 @@ INDEX_HTML = """
     async function copyText(value, statusText) {
       await navigator.clipboard.writeText(value);
       mapStatusEl.textContent = statusText;
+    }
+
+    async function fetchWithTimeout(url, options = {}) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        return await fetch(url, {...options, signal: controller.signal});
+      } catch (error) {
+        if (error.name === "AbortError") {
+          throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+        }
+        throw error;
+      } finally {
+        window.clearTimeout(timeout);
+      }
     }
 
     async function responseErrorMessage(response) {
@@ -623,14 +639,26 @@ async def audit_recent() -> dict[str, object]:
 @app.get("/portfolio/{rep_name}")
 async def success_rep_portfolio(rep_name: str) -> dict[str, Any]:
     try:
-        return await build_success_rep_portfolio(
-            snowflake_client=SnowflakeClient(settings),
-            rep_name=rep_name,
+        return await asyncio.wait_for(
+            build_success_rep_portfolio(
+                snowflake_client=SnowflakeClient(settings),
+                rep_name=rep_name,
+            ),
+            timeout=PORTFOLIO_TIMEOUT_SECONDS,
         )
+    except TimeoutError as exc:
+        logger.exception("success_rep_portfolio_timeout", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to build portfolio: Snowflake/Zapier did not respond within "
+                f"{PORTFOLIO_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("success_rep_portfolio_failed", rep_name=rep_name)
         raise HTTPException(
-            status_code=500,
+            status_code=424,
             detail=f"Unable to build portfolio: {str(exc)[:1000]}",
         ) from exc
 
@@ -764,14 +792,26 @@ async def account_map_preview(
 ) -> dict[str, Any]:
     _require_service_key(x_service_key)
     try:
-        portfolio = await build_success_rep_portfolio(
-            snowflake_client=SnowflakeClient(settings),
-            rep_name=rep_name,
+        portfolio = await asyncio.wait_for(
+            build_success_rep_portfolio(
+                snowflake_client=SnowflakeClient(settings),
+                rep_name=rep_name,
+            ),
+            timeout=PORTFOLIO_TIMEOUT_SECONDS,
         )
+    except TimeoutError as exc:
+        logger.exception("account_map_preview_portfolio_timeout", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to build account map preview: Snowflake/Zapier did not "
+                f"respond within {PORTFOLIO_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("account_map_preview_portfolio_failed", rep_name=rep_name)
         raise HTTPException(
-            status_code=500,
+            status_code=424,
             detail=f"Unable to build account map preview: {str(exc)[:1000]}",
         ) from exc
 
@@ -780,7 +820,19 @@ async def account_map_preview(
             base_url=settings.ac_api_url,
             api_key=settings.ac_api_key,
         ) as api:
-            ac_accounts = await api.list_all_accounts()
+            ac_accounts = await asyncio.wait_for(
+                api.list_all_accounts(),
+                timeout=AC_ACCOUNT_LIST_TIMEOUT_SECONDS,
+            )
+    except TimeoutError as exc:
+        logger.exception("account_map_preview_activecampaign_timeout", rep_name=rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to list ActiveCampaign accounts: ActiveCampaign did not "
+                f"respond within {AC_ACCOUNT_LIST_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("account_map_preview_activecampaign_failed", rep_name=rep_name)
         raise HTTPException(
@@ -811,14 +863,26 @@ class ActionCommitRequest(BaseModel):
 @app.post("/actions/plan")
 async def plan_actions(body: ActionPlanRequest) -> dict[str, Any]:
     try:
-        portfolio = await build_success_rep_portfolio(
-            snowflake_client=SnowflakeClient(settings),
-            rep_name=body.rep_name,
+        portfolio = await asyncio.wait_for(
+            build_success_rep_portfolio(
+                snowflake_client=SnowflakeClient(settings),
+                rep_name=body.rep_name,
+            ),
+            timeout=PORTFOLIO_TIMEOUT_SECONDS,
         )
+    except TimeoutError as exc:
+        logger.exception("action_plan_portfolio_timeout", rep_name=body.rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to build action plan: Snowflake/Zapier did not respond "
+                f"within {PORTFOLIO_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("action_plan_portfolio_failed", rep_name=body.rep_name)
         raise HTTPException(
-            status_code=500,
+            status_code=424,
             detail=f"Unable to build action plan: {str(exc)[:1000]}",
         ) from exc
 
@@ -836,14 +900,26 @@ async def plan_actions(body: ActionPlanRequest) -> dict[str, Any]:
 @app.post("/actions/commit")
 async def commit_actions(body: ActionCommitRequest) -> dict[str, Any]:
     try:
-        portfolio = await build_success_rep_portfolio(
-            snowflake_client=SnowflakeClient(settings),
-            rep_name=body.rep_name,
+        portfolio = await asyncio.wait_for(
+            build_success_rep_portfolio(
+                snowflake_client=SnowflakeClient(settings),
+                rep_name=body.rep_name,
+            ),
+            timeout=PORTFOLIO_TIMEOUT_SECONDS,
         )
+    except TimeoutError as exc:
+        logger.exception("action_commit_portfolio_timeout", rep_name=body.rep_name)
+        raise HTTPException(
+            status_code=424,
+            detail=(
+                "Unable to build action commit set: Snowflake/Zapier did not "
+                f"respond within {PORTFOLIO_TIMEOUT_SECONDS} seconds"
+            ),
+        ) from exc
     except Exception as exc:
         logger.exception("action_commit_portfolio_failed", rep_name=body.rep_name)
         raise HTTPException(
-            status_code=500,
+            status_code=424,
             detail=f"Unable to build action commit set: {str(exc)[:1000]}",
         ) from exc
 

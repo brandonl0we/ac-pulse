@@ -120,6 +120,38 @@ async def test_success_rep_portfolio_returns_built_portfolio(
 
 
 @pytest.mark.asyncio
+async def test_success_rep_portfolio_times_out_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        await main.asyncio.sleep(0.02)
+        return {"accounts": []}
+
+    monkeypatch.setattr(main, "PORTFOLIO_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await main.success_rep_portfolio("Kevin Oostema")
+
+    assert exc_info.value.status_code == 424
+    assert "did not respond" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
 async def test_success_rep_portfolio_query_route_reuses_builder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -288,6 +320,56 @@ async def test_account_map_preview_reports_activecampaign_failure(
 
     assert exc_info.value.status_code == 424
     assert "Unable to list ActiveCampaign accounts" in str(exc_info.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_account_map_preview_reports_activecampaign_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from fastapi import HTTPException
+
+    from app import main
+
+    class FakeSnowflakeClient:
+        def __init__(self, settings: Any) -> None:
+            self.settings = settings
+
+    class FakeActiveCampaignAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+        async def __aenter__(self) -> "FakeActiveCampaignAPI":
+            return self
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+        async def list_all_accounts(self) -> list[dict[str, Any]]:
+            await main.asyncio.sleep(0.02)
+            return []
+
+    async def fake_build_success_rep_portfolio(**kwargs: Any) -> dict[str, Any]:
+        del kwargs
+        return {"success_rep_name": "Kevin Oostema", "accounts": []}
+
+    monkeypatch.setattr(main.settings, "service_api_key", "secret")
+    monkeypatch.setattr(main, "AC_ACCOUNT_LIST_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(main, "SnowflakeClient", FakeSnowflakeClient)
+    monkeypatch.setattr(main, "ActiveCampaignAPI", FakeActiveCampaignAPI)
+    monkeypatch.setattr(
+        main,
+        "build_success_rep_portfolio",
+        fake_build_success_rep_portfolio,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await main.account_map_preview(
+            rep_name="Kevin Oostema",
+            x_service_key="secret",
+        )
+
+    assert exc_info.value.status_code == 424
+    assert "ActiveCampaign did not respond" in str(exc_info.value.detail)
 
 
 @pytest.mark.asyncio
