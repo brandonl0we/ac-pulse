@@ -166,6 +166,23 @@ class ActiveCampaignAPI:
         response = await self._request("POST", f"/accounts/{account_id}/notes", json=payload)
         return cast(dict[str, Any], response.json())
 
+    async def create_task(
+        self,
+        *,
+        title: str,
+        note: str,
+        due_at: str | None = None,
+    ) -> dict[str, Any]:
+        task: dict[str, Any] = {
+            "title": title,
+            "note": note,
+            "status": 0,
+        }
+        if due_at is not None:
+            task["duedate"] = due_at
+        response = await self._request("POST", "/dealTasks", json={"dealTask": task})
+        return cast(dict[str, Any], response.json())
+
     async def _request(
         self,
         method: str,
