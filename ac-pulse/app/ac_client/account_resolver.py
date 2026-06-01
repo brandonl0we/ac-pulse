@@ -1,5 +1,6 @@
 import csv
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -41,16 +42,32 @@ class AccountResolver:
             return {}
 
         payload = json.loads(self.inline_json)
-        if not isinstance(payload, dict):
-            raise ValueError("ACCOUNT_ID_MAP_JSON must be a JSON object")
+        if isinstance(payload, Mapping):
+            return {
+                int(snowflake_account_id): _coerce_ac_account_id(ac_account_id)
+                for snowflake_account_id, ac_account_id in payload.items()
+            }
 
-        mapping: dict[int, int] = {}
-        for snowflake_account_id, ac_account_id in payload.items():
-            mapping[int(snowflake_account_id)] = _coerce_ac_account_id(ac_account_id)
-        return mapping
+        if isinstance(payload, Sequence) and not isinstance(payload, str):
+            mapping: dict[int, int] = {}
+            for row in payload:
+                mapping.update(_mapping_row_to_pair(row))
+            return mapping
+
+        raise ValueError(
+            "ACCOUNT_ID_MAP_JSON must be a JSON object or a list of mapping rows"
+        )
+
+
+def _mapping_row_to_pair(row: Any) -> dict[int, int]:
+    if not isinstance(row, Mapping):
+        raise ValueError("ACCOUNT_ID_MAP_JSON rows must be objects")
+    return {
+        int(row["snowflake_account_id"]): _coerce_ac_account_id(row["ac_account_id"]),
+    }
 
 
 def _coerce_ac_account_id(value: Any) -> int:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         value = value.get("ac_account_id")
     return int(value)
