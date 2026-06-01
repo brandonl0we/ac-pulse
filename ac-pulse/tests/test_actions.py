@@ -134,11 +134,12 @@ async def test_commit_action_plan_requires_confirmation() -> None:
 
     assert result["status"] == "requires_confirmation"
     assert result["summary"]["committed"] == 0
+    assert api.tasks == []
     assert api.notes == []
 
 
 @pytest.mark.asyncio
-async def test_commit_action_plan_writes_selected_account_note() -> None:
+async def test_commit_action_plan_writes_selected_task_to_activecampaign_task() -> None:
     api = FakeActiveCampaignAPI()
     plan = {
         "actions": [
@@ -163,9 +164,45 @@ async def test_commit_action_plan_writes_selected_account_note() -> None:
     )
 
     assert result["status"] == "committed"
+    assert result["mode"] == "activecampaign_objects"
     assert result["summary"]["committed"] == 1
+    assert api.notes == []
+    assert api.tasks[0]["title"] == "Schedule churn-risk outreach"
+    assert api.tasks[0]["due_at"] is not None
+    assert "Dedupe-Key: cs:task:42:schedule-churn-risk-outreach" in api.tasks[0]["note"]
+    assert "ActiveCampaign Account ID: 9001" in api.tasks[0]["note"]
+    assert result["committed"][0]["write_target"] == "activecampaign_task"
+
+
+@pytest.mark.asyncio
+async def test_commit_action_plan_writes_note_actions_to_account_notes() -> None:
+    api = FakeActiveCampaignAPI()
+    plan = {
+        "actions": [
+            {
+                "dedupe_key": "cs:note:42:schedule-churn-risk-outreach",
+                "action_type": "note",
+                "snowflake_account_id": 42,
+                "activecampaign_account_id": 9001,
+                "title": "CS context: Schedule churn-risk outreach",
+                "priority": "normal",
+                "due_in_days": None,
+                "body": "Churn risk is Very High.",
+            }
+        ]
+    }
+
+    result = await commit_action_plan(
+        plan=plan,
+        activecampaign_api=api,
+        dedupe_keys=["cs:note:42:schedule-churn-risk-outreach"],
+        confirm=True,
+    )
+
+    assert result["summary"]["committed"] == 1
+    assert api.tasks == []
     assert api.notes[0]["account_id"] == 9001
-    assert "Dedupe-Key: cs:task:42:schedule-churn-risk-outreach" in api.notes[0]["note"]
+    assert "Dedupe-Key: cs:note:42:schedule-churn-risk-outreach" in api.notes[0]["note"]
     assert result["committed"][0]["write_target"] == "account_note"
 
 
@@ -197,6 +234,7 @@ async def test_commit_action_plan_skips_unmapped_account() -> None:
     assert result["summary"]["committed"] == 0
     assert result["summary"]["skipped"] == 1
     assert result["skipped"][0]["reason"] == "missing_activecampaign_account_id"
+    assert api.tasks == []
     assert api.notes == []
 
 
@@ -235,6 +273,7 @@ def _account(
 class FakeActiveCampaignAPI:
     def __init__(self) -> None:
         self.notes: list[dict[str, Any]] = []
+        self.tasks: list[dict[str, Any]] = []
 
     async def create_account_note(
         self,
@@ -244,3 +283,13 @@ class FakeActiveCampaignAPI:
     ) -> dict[str, Any]:
         self.notes.append({"account_id": account_id, "note": note})
         return {"note": {"id": f"note-{len(self.notes)}"}}
+
+    async def create_task(
+        self,
+        *,
+        title: str,
+        note: str,
+        due_at: str | None = None,
+    ) -> dict[str, Any]:
+        self.tasks.append({"title": title, "note": note, "due_at": due_at})
+        return {"dealTask": {"id": f"task-{len(self.tasks)}"}}
