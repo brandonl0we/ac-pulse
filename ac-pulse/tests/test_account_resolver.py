@@ -1,22 +1,74 @@
+from pathlib import Path
+
+import pytest
+
 from app.ac_client.account_resolver import AccountResolver
 
 
-def test_account_resolver_uses_inline_json_before_csv(tmp_path) -> None:
-    csv_path = tmp_path / "account-map.csv"
-    csv_path.write_text(
-        "snowflake_account_id,ac_account_id\n1043604,111\n",
+def test_account_resolver_reads_inline_object_mapping() -> None:
+    resolver = AccountResolver(
+        csv_path=Path("missing.csv"),
+        inline_json='{"101": 9001}',
+    )
+
+    assert resolver.resolve(101) == 9001
+
+
+def test_account_resolver_reads_nested_inline_object_mapping() -> None:
+    resolver = AccountResolver(
+        csv_path=Path("missing.csv"),
+        inline_json='{"101": {"ac_account_id": 9001}}',
+    )
+
+    assert resolver.resolve(101) == 9001
+
+
+def test_account_resolver_reads_inline_row_mapping() -> None:
+    resolver = AccountResolver(
+        csv_path=Path("missing.csv"),
+        inline_json='[{"snowflake_account_id": 101, "ac_account_id": 9001}]',
+    )
+
+    assert resolver.resolve(101) == 9001
+
+
+def test_account_resolver_inline_mapping_takes_precedence(tmp_path: Path) -> None:
+    mapping_path = tmp_path / "account_id_map.csv"
+    mapping_path.write_text(
+        "snowflake_account_id,ac_account_id\n101,8001\n",
         encoding="utf-8",
     )
 
-    resolver = AccountResolver(csv_path, '{"1043604": 9001}')
-
-    assert resolver.resolve(1043604) == 9001
-
-
-def test_account_resolver_accepts_richer_inline_rows(tmp_path) -> None:
     resolver = AccountResolver(
-        tmp_path / "missing.csv",
-        '{"1043604": {"ac_account_id": "9001"}}',
+        csv_path=mapping_path,
+        inline_json='{"101": 9001}',
     )
 
-    assert resolver.resolve(1043604) == 9001
+    assert resolver.resolve(101) == 9001
+
+
+def test_account_resolver_reads_csv_when_inline_mapping_is_empty(tmp_path: Path) -> None:
+    mapping_path = tmp_path / "account_id_map.csv"
+    mapping_path.write_text(
+        "snowflake_account_id,ac_account_id\n101,8001\n",
+        encoding="utf-8",
+    )
+
+    resolver = AccountResolver(csv_path=mapping_path)
+
+    assert resolver.resolve(101) == 8001
+
+
+def test_account_resolver_raises_for_missing_mapping() -> None:
+    resolver = AccountResolver(csv_path=Path("missing.csv"))
+
+    with pytest.raises(KeyError):
+        resolver.resolve(101)
+
+
+def test_account_resolver_rejects_invalid_inline_mapping_shape() -> None:
+    with pytest.raises(ValueError, match="JSON object or a list of mapping rows"):
+        AccountResolver(
+            csv_path=Path("missing.csv"),
+            inline_json='"not a mapping"',
+        )
