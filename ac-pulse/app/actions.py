@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from app.ac_client.account_resolver import AccountResolver
@@ -136,18 +136,27 @@ async def commit_action_plan(
             skipped.append(_commit_skip(action, "missing_activecampaign_account_id"))
             continue
 
-        note = _commit_note_body(action)
-        response = await activecampaign_api.create_account_note(
-            account_id=int(ac_account_id),
-            note=note,
-        )
+        if action.get("action_type") == "task":
+            response = await activecampaign_api.create_task(
+                title=str(action["title"]),
+                note=_commit_task_body(action),
+                due_at=_task_due_at(action),
+            )
+            write_target = "activecampaign_task"
+        else:
+            response = await activecampaign_api.create_account_note(
+                account_id=int(ac_account_id),
+                note=_commit_note_body(action),
+            )
+            write_target = "account_note"
+
         committed.append(
             {
                 "dedupe_key": action["dedupe_key"],
                 "action_type": action["action_type"],
                 "snowflake_account_id": action["snowflake_account_id"],
                 "activecampaign_account_id": int(ac_account_id),
-                "write_target": "account_note",
+                "write_target": write_target,
                 "activecampaign_response": response,
             }
         )
@@ -281,7 +290,7 @@ def _commit_response(
     missing_keys: list[str],
 ) -> dict[str, Any]:
     return {
-        "mode": "account_notes_only",
+        "mode": "activecampaign_objects",
         "status": status,
         "generated_at": datetime.now(UTC).isoformat(),
         "summary": {
@@ -307,6 +316,20 @@ def _commit_skip(action: dict[str, Any], reason: str) -> dict[str, Any]:
     }
 
 
+def _commit_task_body(action: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            f"[ac-pulse] {action['title']}",
+            f"Dedupe-Key: {action['dedupe_key']}",
+            f"ActiveCampaign Account ID: {action['activecampaign_account_id']}",
+            f"Snowflake Account ID: {action['snowflake_account_id']}",
+            f"Priority: {action.get('priority', 'normal')}",
+            "",
+            str(action.get("body") or ""),
+        ]
+    )
+
+
 def _commit_note_body(action: dict[str, Any]) -> str:
     due = action.get("due_in_days")
     due_line = "Due: none" if due is None else f"Due: in {due} days"
@@ -321,6 +344,14 @@ def _commit_note_body(action: dict[str, Any]) -> str:
             str(action.get("body") or ""),
         ]
     )
+
+
+def _task_due_at(action: dict[str, Any]) -> str | None:
+    due_in_days = action.get("due_in_days")
+    if due_in_days is None:
+        return None
+    due_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=int(due_in_days))
+    return due_at.isoformat()
 
 
 def _slug(value: str) -> str:
