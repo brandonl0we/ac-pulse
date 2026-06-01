@@ -94,6 +94,43 @@ async def test_create_account_note_posts_to_account_notes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_task_posts_to_deal_tasks() -> None:
+    async with httpx.AsyncClient(base_url="https://example.test/api/3") as client:
+        api = ActiveCampaignAPI(
+            base_url="https://example.test/api/3",
+            api_key="key",
+            client=client,
+        )
+        with patch.object(
+            client,
+            "request",
+            return_value=httpx.Response(
+                status_code=201,
+                request=httpx.Request("POST", "/dealTasks"),
+                json={"dealTask": {"id": "task-1"}},
+            ),
+        ) as request_mock:
+            payload = await api.create_task(
+                title="Schedule churn-risk outreach",
+                note="Churn risk is High.",
+                due_at="2026-06-02T12:00:00+00:00",
+            )
+
+    assert payload == {"dealTask": {"id": "task-1"}}
+    request_mock.assert_called_once()
+    assert request_mock.call_args.kwargs["method"] == "POST"
+    assert request_mock.call_args.kwargs["url"] == "dealTasks"
+    assert request_mock.call_args.kwargs["json"] == {
+        "dealTask": {
+            "title": "Schedule churn-risk outreach",
+            "note": "Churn risk is High.",
+            "status": 0,
+            "duedate": "2026-06-02T12:00:00+00:00",
+        }
+    }
+
+
+@pytest.mark.asyncio
 async def test_list_all_accounts_pages_until_short_page() -> None:
     async with httpx.AsyncClient(base_url="https://example.test/api/3") as client:
         api = ActiveCampaignAPI(
